@@ -1,4 +1,4 @@
-require("lua.vim.globals")
+require("lua.vim.global_opts")
 require("lua.vim.keymaps")
 
 -- Bootstrap lazy.nvim
