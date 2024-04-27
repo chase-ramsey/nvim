@@ -14,13 +14,12 @@ return {
           visible = true,
           never_show = {
             ".git",
-          }
+          },
         },
-      }
+      },
     },
     config = function()
-      vim.keymap.set('n', '<C-n>', ':Neotree filesystem reveal toggle right<CR>')
-    end
-  }
+      vim.keymap.set("n", "<C-n>", ":Neotree filesystem reveal toggle right<CR>")
+    end,
+  },
 }
-
