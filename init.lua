@@ -1,5 +1,5 @@
-require("lua.vim.global_opts")
-require("lua.vim.keymaps")
+require("vim.global_opts")
+require("vim.keymaps")
 
 -- Bootstrap lazy.nvim
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
