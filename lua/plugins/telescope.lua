@@ -9,6 +9,8 @@ return {
       vim.keymap.set("n", "<leader>fg", ts_builtin.live_grep, { desc = "Telescope live grep" })
       vim.keymap.set("n", "<leader>fb", ts_builtin.buffers, { desc = "Telescope show open buffers" })
       vim.keymap.set("n", "<leader>fh", ts_builtin.help_tags, { desc = "Telescope show help files" })
+      vim.keymap.set("n", "<leader>fr", ts_builtin.resume, { desc = "Telescope show last live grep results" })
+      vim.keymap.set("n", "<leader>fs", ts_builtin.grep_string, { desc = "Telescope grep for string under cursor" })
     end,
   },
   {
