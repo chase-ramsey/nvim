@@ -1,3 +1,46 @@
+local function _check_for_subproject_venv_in_monorepo(args)
+  local client = vim.lsp.get_client_by_id(args.data.client_id)
+  if client.name == "pyright" then
+    -- If there is a virtual environment in the project root
+    -- return to allow default
+    local git_root = io.popen("git rev-parse --show-toplevel", "r"):read()
+    if vim.fn.isdirectory(git_root .. "/.venv") == 1 then
+      return
+    end
+
+    -- Otherwise, search parent directories in the current buffer's
+    -- file path for a virtual environment
+    local sub_venv
+    for parent_dir in vim.fs.parents(vim.api.nvim_buf_get_name(0)) do
+      if vim.fn.isdirectory(parent_dir .. "/.venv") == 1 then
+        sub_venv = parent_dir .. "/.venv"
+        break
+      end
+    end
+
+    -- If none found, return to allow default
+    if not sub_venv then
+      return
+    end
+
+    --[[
+         If a virtual environment is found in a subproject,
+         set the pythonPath for the current client's config
+         to be the path to python in that venv.
+
+         This is the method of updating the python path in
+         pyright for a single client from the nvim-lspconfig
+         pyright module (part of the implementation of the
+         PyrightSetPythonPath command exposed there)
+    ]]
+    --
+    client.config.settings = vim.tbl_deep_extend('force', client.config.settings,
+      { python = { pythonPath = sub_venv .. "/bin/python" } })
+    client.notify('workspace/didChangeConfiguration', { settings = nil })
+    print("Set pythonPath to " .. client.config.settings.python.pythonPath)
+  end
+end
+
 return {
   {
     "williamboman/mason.nvim",
@@ -37,6 +80,8 @@ return {
       vim.keymap.set("n", "<leader>gr", vim.lsp.buf.references, { desc = "List references" })
       vim.keymap.set("n", "<leader>gd", vim.lsp.buf.definition, { desc = "Go to definition" })
       vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, { desc = "Show code actions" })
+
+      vim.api.nvim_create_autocmd("LspAttach", { callback = _check_for_subproject_venv_in_monorepo })
     end,
   },
 }
