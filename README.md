@@ -10,9 +10,15 @@ First, install Neovim.
 brew install neovim
 ```
 
+Also, install `ripgrep`, a dependency of Telescope.
+
+```
+brew install ripgrep
+```
+
 Then, clone this repository into your `~/.config` directory.
 On first starting neovim with `nvim`, `lazy.nvim` will install itself and all
-necessary plugins.
+necessary plugins (not LSPs, formatters, or linters -- use `:Mason` for that).
 
 ### Acknowledgments
 
