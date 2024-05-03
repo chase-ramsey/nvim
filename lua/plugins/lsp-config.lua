@@ -16,6 +16,11 @@ local function _check_for_subproject_venv_in_monorepo(args)
         sub_venv = parent_dir .. "/.venv"
         break
       end
+
+      -- Don't go any farther up than the git root
+      if parent_dir == git_root then
+        break
+      end
     end
 
     -- If none found, return to allow default
