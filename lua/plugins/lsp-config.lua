@@ -4,6 +4,10 @@ local function _check_for_subproject_venv_in_monorepo(args)
     -- If there is a virtual environment in the project root
     -- return to allow default
     local git_root = io.popen("git rev-parse --show-toplevel", "r"):read()
+    if not git_root then
+      return
+    end
+
     if vim.fn.isdirectory(git_root .. "/.venv") == 1 then
       return
     end
