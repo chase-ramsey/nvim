@@ -11,6 +11,12 @@ return {
       vim.keymap.set("n", "<leader>fh", ts_builtin.help_tags, { desc = "Telescope show help files" })
       vim.keymap.set("n", "<leader>fr", ts_builtin.resume, { desc = "Telescope show last live grep results" })
       vim.keymap.set("n", "<leader>fs", ts_builtin.grep_string, { desc = "Telescope grep for string under cursor" })
+
+      local function recent_files()
+        ts_builtin.oldfiles({ cwd_only = true, include_current_session = true })
+      end
+
+      vim.keymap.set("n", "<leader>fo", recent_files, { desc = "Telescope show recent files" })
     end,
   },
   {
