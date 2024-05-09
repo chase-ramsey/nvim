@@ -91,6 +91,15 @@ return {
       vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, { desc = "Show code actions" })
 
       vim.api.nvim_create_autocmd("LspAttach", { callback = _check_for_subproject_venv_in_monorepo })
+
+      vim.diagnostic.config({ virtual_text = false })
+      vim.o.updatetime = 500
+      vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
+        group = vim.api.nvim_create_augroup("float_diagnostic", { clear = true }),
+        callback = function ()
+          vim.diagnostic.open_float(nil, {focus=false})
+        end
+      })
     end,
   },
 }
