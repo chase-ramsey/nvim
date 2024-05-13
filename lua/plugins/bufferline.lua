@@ -4,7 +4,7 @@ return {
     dependencies = { "nvim-tree/nvim-web-devicons" },
     config = function()
       require("bufferline").setup {}
-      vim.keymap.set("n", "<leader>bb", ":BufferLinePick<CR>", { desc = ":BufferLinePick" })
+      vim.keymap.set("n", "<C-p>", ":BufferLinePick<CR>", { desc = ":BufferLinePick" })
     end
   },
   {

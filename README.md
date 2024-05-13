@@ -16,6 +16,13 @@ Also, install `ripgrep`, a dependency of Telescope.
 brew install ripgrep
 ```
 
+Install global Python dependencies
+
+```
+pipx install black
+pipx install isort
+```
+
 Then, clone this repository into your `~/.config` directory.
 On first starting neovim with `nvim`, `lazy.nvim` will install itself and all
 necessary plugins (not LSPs, formatters, or linters -- use `:Mason` for that).

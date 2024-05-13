@@ -6,12 +6,15 @@ return {
 
       null_ls.setup({
         sources = {
+          -- Lua
           null_ls.builtins.formatting.stylua,
-          null_ls.builtins.formatting.isort,
-          null_ls.builtins.formatting.black,
+          -- Python
+          null_ls.builtins.formatting.isort.with({ command = "/Users/chase/.local/bin/isort" }),
+          null_ls.builtins.formatting.black.with({ command = "/Users/chase/.local/bin/black" }),
+          -- Javascript
           null_ls.builtins.formatting.prettier,
-          null_ls.builtins.diagnostics.eslint_d,
         },
+        debug = true,
       })
 
       vim.keymap.set("n", "<leader>gf", vim.lsp.buf.format, { desc = "Lint/format file" })

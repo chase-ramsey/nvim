@@ -1,4 +1,3 @@
-
 local function _check_for_subproject_venv_in_monorepo(args)
   local client = vim.lsp.get_client_by_id(args.data.client_id)
   if client.name == "pyright" then
@@ -97,8 +96,8 @@ return {
       vim.o.updatetime = 500
       vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
         group = vim.api.nvim_create_augroup("float_diagnostic", { clear = true }),
-        callback = function ()
-          vim.diagnostic.open_float(nil, {focus=false})
+        callback = function()
+          vim.diagnostic.open_float(nil, { focus = false })
         end
       })
     end,
