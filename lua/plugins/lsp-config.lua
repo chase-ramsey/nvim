@@ -46,7 +46,7 @@ local function _check_for_subproject_venv_in_monorepo(args)
     client.config.settings = vim.tbl_deep_extend('force', client.config.settings,
       { python = { pythonPath = sub_venv .. "/bin/python" } })
     client.notify('workspace/didChangeConfiguration', { settings = nil })
-    print("Set pythonPath to " .. client.config.settings.python.pythonPath)
+    vim.notify("Set pythonPath to " .. client.config.settings.python.pythonPath)
   end
 end
 
