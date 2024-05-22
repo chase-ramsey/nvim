@@ -1,31 +1,9 @@
-local function _check_for_subproject_venv_in_monorepo(args)
+local venv = require("utils.venv")
+
+local function _set_sub_venv_python_path_for_pyright_client(args)
   local client = vim.lsp.get_client_by_id(args.data.client_id)
   if client.name == "pyright" then
-    local git_root = io.popen("git rev-parse --show-toplevel", "r"):read()
-    if not git_root then
-      return
-    end
-
-    -- If there is a virtual environment in the project root
-    -- return to allow default
-    if vim.fn.isdirectory(git_root .. "/.venv") == 1 then
-      return
-    end
-
-    -- Otherwise, search parent directories in the current buffer's
-    -- file path for a virtual environment
-    local sub_venv
-    for parent_dir in vim.fs.parents(vim.api.nvim_buf_get_name(0)) do
-      if vim.fn.isdirectory(parent_dir .. "/.venv") == 1 then
-        sub_venv = parent_dir .. "/.venv"
-        break
-      end
-
-      -- Don't go any farther up than the git root
-      if parent_dir == git_root then
-        break
-      end
-    end
+    local sub_venv = venv.check_for_subproject_venv_in_monorepo()
 
     -- If none found, return to allow default
     if not sub_venv then
@@ -90,7 +68,7 @@ return {
       vim.keymap.set("n", "<leader>gd", vim.lsp.buf.definition, { desc = "Go to definition" })
       vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, { desc = "Show code actions" })
 
-      vim.api.nvim_create_autocmd("LspAttach", { callback = _check_for_subproject_venv_in_monorepo })
+      vim.api.nvim_create_autocmd("LspAttach", { callback = _set_sub_venv_python_path_for_pyright_client })
 
       vim.diagnostic.config({ virtual_text = false })
       vim.o.updatetime = 500
