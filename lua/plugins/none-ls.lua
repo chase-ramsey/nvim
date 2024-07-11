@@ -18,6 +18,7 @@ return {
       })
 
       vim.keymap.set("n", "<leader>gf", vim.lsp.buf.format, { desc = "Lint/format file" })
+      vim.api.nvim_create_autocmd("BufWrite", { callback = vim.lsp.buf.format })
     end,
   },
 }
