@@ -1,33 +1,3 @@
-local venv = require("utils.venv")
-
-local function _set_sub_venv_python_path_for_pyright_client(args)
-  local client = vim.lsp.get_client_by_id(args.data.client_id)
-  if client.name == "pyright" then
-    local sub_venv = venv.check_for_subproject_venv_in_monorepo()
-
-    -- If none found, return to allow default
-    if not sub_venv then
-      return
-    end
-
-    --[[
-         If a virtual environment is found in a subproject,
-         set the pythonPath for the current client's config
-         to be the path to python in that venv.
-
-         This is the method of updating the python path in
-         pyright for a single client from the nvim-lspconfig
-         pyright module (part of the implementation of the
-         PyrightSetPythonPath command exposed there)
-    ]]
-    --
-    client.config.settings = vim.tbl_deep_extend('force', client.config.settings,
-      { python = { pythonPath = sub_venv .. "/bin/python" } })
-    client.notify('workspace/didChangeConfiguration', { settings = nil })
-    vim.notify("Set pythonPath to " .. client.config.settings.python.pythonPath)
-  end
-end
-
 return {
   {
     "williamboman/mason.nvim",
@@ -67,8 +37,6 @@ return {
       vim.keymap.set("n", "<leader>gr", vim.lsp.buf.references, { desc = "List references" })
       vim.keymap.set("n", "<leader>gd", vim.lsp.buf.definition, { desc = "Go to definition" })
       vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, { desc = "Show code actions" })
-
-      vim.api.nvim_create_autocmd("LspAttach", { callback = _set_sub_venv_python_path_for_pyright_client })
 
       vim.diagnostic.config({ virtual_text = false })
       vim.o.updatetime = 500
