@@ -31,7 +31,12 @@ return {
     local dapui = require("dapui")
     dapui.setup()
 
-    vim.keymap.set("n", "<Leader>dd", dapui.close, { desc = "close dap-ui" })
+    local function end_debug_session()
+      dap.terminate()
+      dapui.close()
+    end
+
+    vim.keymap.set("n", "<Leader>dd", end_debug_session, { desc = "terminate debugger and close dap-ui" })
     dap.listeners.before.attach.dapui_config = function()
       dapui.open()
     end
