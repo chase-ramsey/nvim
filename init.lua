@@ -1,6 +1,8 @@
 require("vim.global_opts")
 require("vim.keymaps")
 
+local CONFIG = require("config")
+
 -- Bootstrap lazy.nvim
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then
@@ -18,4 +20,4 @@ vim.opt.rtp:prepend(lazypath)
 
 -- Initialize plugins
 require("lazy").setup("plugins")
-vim.cmd([[colorscheme onedark]])
+vim.cmd("colorscheme " .. CONFIG.colorschemes.theme)

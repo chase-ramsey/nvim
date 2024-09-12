@@ -1,0 +1,7 @@
+[lsp_config]
+
+[lsp_config.python]
+filter_cat_type_errors = false
+
+[colorschemes]
+theme = "onedark"

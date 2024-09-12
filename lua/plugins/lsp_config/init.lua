@@ -1,3 +1,6 @@
+local handlers = require("plugins.lsp_config._handlers")
+
+
 return {
   {
     "williamboman/mason.nvim",
@@ -46,6 +49,8 @@ return {
           vim.diagnostic.open_float(nil, { focus = false })
         end
       })
+
+      vim.lsp.handlers["textDocument/publishDiagnostics"] = handlers.compose_lsp_diagnostics_handlers()
     end,
   },
 }
