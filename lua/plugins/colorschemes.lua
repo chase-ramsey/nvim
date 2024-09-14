@@ -3,8 +3,7 @@ return {
     -- Themes:
     --  * kanagawa
     --  * kanagawa-wave
-    --  * kanagawa-dragon
-    --  * kanagawa-lotus
+    --  * kanagawa-dragon * kanagawa-lotus
     "rebelot/kanagawa.nvim",
     lazy = false,
     priority = 1000,
@@ -38,5 +37,37 @@ return {
     config = function()
       require("onedark").setup({ style = "darker" })
     end
+  },
+  -- Themes:
+  -- * catppuccin
+  -- * catppuccin-latte
+  -- * catppuccin-frappe
+  -- * catppuccin-macchiato
+  -- * catppuccin-mocha
+  { "catppuccin/nvim", name = "catppuccin", priority = 1000 },
+  -- Themes:
+  -- * nightfox
+  -- * dayfox
+  -- * dawnfox
+  -- * duskfox
+  -- * nordfox
+  -- * terafox
+  -- * carbonfox
+  {
+    "EdenEast/nightfox.nvim",
+    priority = 1000,
+  },
+  -- Themes:
+  -- * everforest
+  {
+    "sainnhe/everforest",
+    priority = 1000,
+    everforest_background = "hard",
+  },
+  -- Themes:
+  -- * papercolor
+  {
+    "NLKNguyen/papercolor-theme",
+    priority = 1000,
   }
 }
