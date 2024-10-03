@@ -16,17 +16,15 @@ return {
     local dappy = require("dap-python")
     dappy.setup("~/.local/share/nvim/mason/packages/debugpy/venv/bin/python")
 
-    local function _wrap_test_method_with_opts()
-      dappy.test_method({ config = { justMyCode = false } })
-    end
-
-    local function _wrap_test_class_with_opts()
-      dappy.test_class({ config = { justMyCode = false } })
+    local function _wrap_test_fn_with_opts(fn)
+      return function()
+        fn({ config = { justMyCode = false } })
+      end
     end
 
     dappy.test_runner = "pytest"
-    vim.keymap.set("n", "<Leader>dm", _wrap_test_method_with_opts, { desc = "Python: test method (debug)" })
-    vim.keymap.set("n", "<Leader>dc", _wrap_test_class_with_opts, { desc = "Python: test class (debug)" })
+    vim.keymap.set("n", "<Leader>dm", _wrap_test_fn_with_opts(dappy.test_method), { desc = "Python: test method (debug)" })
+    vim.keymap.set("n", "<Leader>dc", _wrap_test_fn_with_opts(dappy.test_class), { desc = "Python: test class (debug)" })
 
     local dapui = require("dapui")
     dapui.setup()
