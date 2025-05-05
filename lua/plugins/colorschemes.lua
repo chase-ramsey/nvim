@@ -69,5 +69,12 @@ return {
   {
     "NLKNguyen/papercolor-theme",
     priority = 1000,
+  },
+  -- Themes:
+  -- * noctis
+  {
+    "iagorrr/noctishc.nvim",
+    priority = 1000,
   }
 }
+

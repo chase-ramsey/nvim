@@ -20,4 +20,5 @@ vim.opt.rtp:prepend(lazypath)
 
 -- Initialize plugins
 require("lazy").setup("plugins")
+vim.cmd("set termguicolors")
 vim.cmd("colorscheme " .. CONFIG.colorschemes.theme)
