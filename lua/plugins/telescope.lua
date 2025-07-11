@@ -1,10 +1,16 @@
+local CONFIG = require("config")
+
 return {
   {
     "nvim-telescope/telescope.nvim",
     tag = "0.1.6",
     dependencies = { "nvim-lua/plenary.nvim" },
     config = function()
+      local ts_config = require("telescope.config")
+      ts_config.set_defaults({ file_ignore_patterns = CONFIG.telescope.file_ignore_patterns or {} })
+
       local ts_builtin = require("telescope.builtin")
+
       vim.keymap.set("n", "<leader>ff", ts_builtin.find_files, { desc = "Telescope find files" })
       vim.keymap.set("n", "<leader>fg", ts_builtin.live_grep, { desc = "Telescope live grep" })
       vim.keymap.set("n", "<leader>fb", ts_builtin.buffers, { desc = "Telescope show open buffers" })
