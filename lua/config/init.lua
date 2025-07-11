@@ -1,5 +1,7 @@
 local toml = require("toml")
 
+local cached_config = nil
+
 local function parse_toml_file(file, fail)
   local f = io.open(file, "r")
 
@@ -13,16 +15,28 @@ local function parse_toml_file(file, fail)
   local content = f:read("*a")
   f:close()
 
-  return toml.parse(content)
+  local ok, result = pcall(toml.parse, content)
+  if not ok then
+    error("Failed to parse TOML in " .. file .. ": " .. result)
+  end
+  return result
 end
 
 local function resolve_config()
-  local base_config = parse_toml_file(vim.fn.expand("$HOME") .. "/.config/nvim/lua/config/_base_config.toml", true)
+  if cached_config then
+    return cached_config
+  end
+
+  local base_config = parse_toml_file(
+    vim.fs.normalize(
+      vim.fn.expand("$HOME") .. "/.config/nvim/lua/config/_base_config.toml"
+    ), true
+  ) or {}
 
   local local_configs_by_priority_desc = {
-    vim.fn.expand("$HOME") .. "/.config/nvim/.nvim_config.toml",
-    vim.fn.expand("$HOME") .. "/.nvim_config.toml",
-    "./.nvim_config.toml",
+    vim.fs.normalize(vim.fn.expand("$HOME") .. "/.config/nvim/.nvim_config.toml"),
+    vim.fs.normalize(vim.fn.expand("$HOME") .. "/.nvim_config.toml"),
+    vim.fs.normalize("./.nvim_config.toml"),
   }
 
   for _, local_config_file in ipairs(local_configs_by_priority_desc) do
@@ -32,12 +46,11 @@ local function resolve_config()
       goto continue
     end
 
-    for k, v in pairs(local_config_file_content) do
-      base_config[k] = v
-    end
+    base_config = vim.tbl_deep_extend("force", base_config, local_config_file_content)
     ::continue::
   end
 
+  cached_config = base_config
   return base_config
 end
 

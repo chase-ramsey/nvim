@@ -1,7 +1,6 @@
 local handlers = require("plugins.lsp_config._handlers")
 local CONFIG = require("config")
 
-
 return {
   {
     "williamboman/mason.nvim",
@@ -17,6 +16,7 @@ return {
           "lua_ls",
           "pyright",
           "ts_ls",
+          "ruff",
         },
       })
     end,
@@ -43,18 +43,18 @@ return {
 
         -- Copied from Ruff docs
         vim.api.nvim_create_autocmd("LspAttach", {
-          group = vim.api.nvim_create_augroup('lsp_attach_disable_ruff_hover', { clear = true }),
+          group = vim.api.nvim_create_augroup("lsp_attach_disable_ruff_hover", { clear = true }),
           callback = function(args)
             local client = vim.lsp.get_client_by_id(args.data.client_id)
             if client == nil then
               return
             end
-            if client.name == 'ruff' then
+            if client.name == "ruff" then
               -- Disable hover in favor of Pyright
               client.server_capabilities.hoverProvider = false
             end
           end,
-          desc = 'LSP: Disable hover capability from Ruff',
+          desc = "LSP: Disable hover capability from Ruff",
         })
       end
 
@@ -73,7 +73,7 @@ return {
         group = vim.api.nvim_create_augroup("float_diagnostic", { clear = true }),
         callback = function()
           vim.diagnostic.open_float(nil, { focus = false })
-        end
+        end,
       })
 
       vim.lsp.handlers["textDocument/publishDiagnostics"] = handlers.compose_lsp_diagnostics_handlers()
