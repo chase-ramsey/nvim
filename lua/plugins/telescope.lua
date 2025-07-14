@@ -7,7 +7,9 @@ return {
     dependencies = { "nvim-lua/plenary.nvim" },
     config = function()
       local ts_config = require("telescope.config")
-      ts_config.set_defaults({ file_ignore_patterns = CONFIG.telescope.file_ignore_patterns or {} })
+      if CONFIG and CONFIG.telescope then
+        ts_config.set_defaults({ file_ignore_patterns = CONFIG.telescope.file_ignore_patterns or {} })
+      end
 
       local ts_builtin = require("telescope.builtin")
 
