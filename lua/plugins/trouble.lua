@@ -5,5 +5,6 @@ return {
     require("trouble").setup({})
 
     vim.api.nvim_create_user_command("Todo", "Trouble todo filter = { buf = 0 }<cr>", {})
-  end
+    vim.keymap.set("n", "<leader>tt", "<cmd>Trouble todo toggle filter = { buf = 0 }<cr>", {})
+  end,
 }
