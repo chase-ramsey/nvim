@@ -18,13 +18,9 @@ return {
         },
       },
     },
+    lazy = false,
     config = function()
-      vim.keymap.set(
-        "n",
-        "<C-n>",
-        ":Neotree filesystem reveal toggle right<CR>",
-        { desc = "Toggle NeoTree on right" }
-      )
+      vim.keymap.set("n", "<C-n>", ":Neotree filesystem reveal toggle right<CR>", { desc = "Toggle NeoTree on right" })
     end,
   },
 }

@@ -1,5 +1,4 @@
 local handlers = require("plugins.lsp_config._handlers")
-local CONFIG = require("config")
 
 return {
   {
@@ -24,42 +23,19 @@ return {
   {
     "neovim/nvim-lspconfig",
     config = function()
-      local lspconfig = require("lspconfig")
       local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
-      lspconfig.lua_ls.setup({
-        capabilities = capabilities,
-      })
-
-      lspconfig.pyright.setup({
-        capabilities = capabilities,
-      })
-
-      if CONFIG and CONFIG.lsp_config.python.use_ruff then
-        vim.notify("Using ruff as linter", vim.log.levels.INFO, { title = "LSP" })
-        lspconfig.ruff.setup({
+      local servers = { "lua_ls", "pyright", "ts_ls", "ruff" }
+      for _, server in ipairs(servers) do
+        vim.lsp.config(server, {
           capabilities = capabilities,
-        })
-
-        -- Copied from Ruff docs
-        vim.api.nvim_create_autocmd("LspAttach", {
-          group = vim.api.nvim_create_augroup("lsp_attach_disable_ruff_hover", { clear = true }),
-          callback = function(args)
-            local client = vim.lsp.get_client_by_id(args.data.client_id)
-            if client == nil then
-              return
-            end
-            if client.name == "ruff" then
-              -- Disable hover in favor of Pyright
-              client.server_capabilities.hoverProvider = false
-            end
-          end,
-          desc = "LSP: Disable hover capability from Ruff",
         })
       end
 
-      lspconfig.ts_ls.setup({
-        capabilities = capabilities,
+      -- In this monorepo, pyproject.toml (which contains [tool.pyright] settings
+      -- including venvPath) must take priority over the root pyrightconfig.json.
+      vim.lsp.config("pyright", {
+        root_markers = { "pyproject.toml", "pyrightconfig.json" },
       })
 
       vim.keymap.set("n", "K", vim.lsp.buf.hover, { desc = "Show LSP description" })

@@ -31,12 +31,12 @@ return {
     end,
   },
   {
-    'navarasu/onedark.nvim',
+    "navarasu/onedark.nvim",
     lazy = false,
     priority = 1000,
     config = function()
       require("onedark").setup({ style = "darker" })
-    end
+    end,
   },
   -- Themes:
   -- * catppuccin
@@ -75,6 +75,5 @@ return {
   {
     "iagorrr/noctishc.nvim",
     priority = 1000,
-  }
+  },
 }
-
