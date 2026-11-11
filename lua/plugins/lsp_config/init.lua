@@ -1,4 +1,22 @@
+local CONFIG = require("config")
 local handlers = require("plugins.lsp_config._handlers")
+local utils = require("utils")
+
+local python_config = CONFIG.lsp_config.python
+local use_pyrefly = python_config.type_checker == "pyrefly"
+
+---Builds an LSP `cmd` that prefers the copy of `tool` pinned in the project's
+---virtualenv, so the server matches the version the project's CI runs.
+---@param tool string
+---@param args string[]
+---@return fun(dispatchers: vim.lsp.rpc.Dispatchers, config: vim.lsp.ClientConfig): vim.lsp.rpc.PublicClient
+local function venv_tool_cmd(tool, args)
+  return function(dispatchers, config)
+    local root_dir = config.root_dir or vim.fn.getcwd()
+    local cmd = vim.list_extend({ utils.venv_tool_or_default(tool, root_dir) }, args)
+    return vim.lsp.rpc.start(cmd, dispatchers, { cwd = root_dir, env = config.cmd_env })
+  end
+end
 
 return {
   {
@@ -16,6 +34,22 @@ return {
           "pyright",
           "ts_ls",
           "ruff",
+          "taplo",
+        },
+        -- pyright stays installed, but must not start alongside pyrefly.
+        automatic_enable = { exclude = use_pyrefly and { "pyright" } or {} },
+      })
+    end,
+  },
+  {
+    -- Installs the non-LSP tools that conform runs (see conform.lua).
+    "WhoIsSethDaniel/mason-tool-installer.nvim",
+    dependencies = { "williamboman/mason.nvim" },
+    config = function()
+      require("mason-tool-installer").setup({
+        ensure_installed = {
+          "stylua",
+          "prettier",
         },
       })
     end,
@@ -25,7 +59,8 @@ return {
     config = function()
       local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
-      local servers = { "lua_ls", "pyright", "ts_ls", "ruff" }
+      local type_checker = use_pyrefly and "pyrefly" or "pyright"
+      local servers = { "lua_ls", type_checker, "ts_ls", "ruff", "taplo" }
       for _, server in ipairs(servers) do
         vim.lsp.config(server, {
           capabilities = capabilities,
@@ -37,6 +72,20 @@ return {
       vim.lsp.config("pyright", {
         root_markers = { "pyproject.toml", "pyrightconfig.json" },
       })
+
+      vim.lsp.config("ruff", {
+        cmd = venv_tool_cmd("ruff", { "server" }),
+        init_options = {
+          settings = { lint = { enable = python_config.ruff_lint } },
+        },
+      })
+
+      if use_pyrefly then
+        -- pyrefly is not installed through Mason: projects pin their own
+        -- version, and its diagnostics should match their CI.
+        vim.lsp.config("pyrefly", { cmd = venv_tool_cmd("pyrefly", { "lsp" }) })
+        vim.lsp.enable("pyrefly")
+      end
 
       vim.keymap.set("n", "K", vim.lsp.buf.hover, { desc = "Show LSP description" })
       vim.keymap.set("n", "<leader>gr", vim.lsp.buf.references, { desc = "List references" })

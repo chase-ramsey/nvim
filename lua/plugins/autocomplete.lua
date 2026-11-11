@@ -43,6 +43,18 @@ return {
         }),
       })
 
+      -- lazydev completes `require` paths. cmp.config.sources overwrites
+      -- group_index, so this source is added separately; group 0 ranks it
+      -- above lua_ls's own require completions.
+      local lua_sources = cmp.config.sources({
+        { name = "nvim_lsp" },
+        { name = "luasnip" },
+      }, {
+        { name = "buffer" },
+      })
+      table.insert(lua_sources, { name = "lazydev", group_index = 0 })
+      cmp.setup.filetype("lua", { sources = lua_sources })
+
       -- Set configuration for specific filetype.
       cmp.setup.filetype("gitcommit", {
         sources = cmp.config.sources({

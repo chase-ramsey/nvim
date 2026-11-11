@@ -1,7 +1,18 @@
+# Defaults. Override any of these in a `.nvim_config.toml` (see README).
+
 [lsp_config]
 
 [lsp_config.python]
 filter_cat_type_errors = false
+# "pyright" or "pyrefly"
+type_checker = "pyright"
+# Show ruff's lint diagnostics. Turn off in repos that lint with another tool.
+ruff_lint = true
+
+# Linters run by nvim-lint, keyed by filetype, e.g. `python = ["flake8"]`.
+[lint]
+
+[lint.linters_by_ft]
 
 [colorschemes]
 theme = "onedark"

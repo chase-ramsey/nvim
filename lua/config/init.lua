@@ -1,4 +1,4 @@
-local toml = require("toml")
+local toml = require("vendor.toml")
 
 local cached_config = nil
 
@@ -28,16 +28,21 @@ local function resolve_config()
   end
 
   local base_config = parse_toml_file(
-    vim.fs.normalize(
-      vim.fn.expand("$HOME") .. "/.config/nvim/lua/config/_base_config.toml"
-    ), true
+    vim.fs.normalize(vim.fn.expand("$HOME") .. "/.config/nvim/lua/config/_base_config.toml"),
+    true
   ) or {}
 
   local local_configs_by_priority_desc = {
     vim.fs.normalize(vim.fn.expand("$HOME") .. "/.config/nvim/.nvim_config.toml"),
     vim.fs.normalize(vim.fn.expand("$HOME") .. "/.nvim_config.toml"),
-    vim.fs.normalize("./.nvim_config.toml"),
   }
+
+  -- Nearest config at or above the working directory, so that a repo-level
+  -- config applies when nvim starts in one of the repo's subdirectories.
+  local nearest_config = vim.fs.find(".nvim_config.toml", { upward = true, path = vim.fn.getcwd(), limit = 1 })[1]
+  if nearest_config then
+    table.insert(local_configs_by_priority_desc, vim.fs.normalize(nearest_config))
+  end
 
   for _, local_config_file in ipairs(local_configs_by_priority_desc) do
     local local_config_file_content = parse_toml_file(local_config_file, false)
