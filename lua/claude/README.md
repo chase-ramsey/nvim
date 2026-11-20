@@ -33,8 +33,11 @@ Both features show their reply the same way.
 - `c` closes it and continues the same session as an interactive chat, started with
   `lemonaid lemon start` in a new terminal window. The chat has Claude's normal tools and permission
   mode, whatever the headless session was limited to.
-- A reply takes the cursor only when the editor is in normal mode in the window that asked. Otherwise
-  it opens in the top-right corner, a message says so, and `<leader>A` jumps into it.
+- A rundown's reply takes the cursor only when the editor is in normal mode in the window that asked.
+  Otherwise it opens in the top-right corner without the cursor, as a task's reply always does. A
+  message says so, and `<leader>A` jumps into it.
+- A reply that arrives while the cursor is in another reply opens no window, so it does not cover the
+  one being read. A message announces it and `<leader>A` opens it.
 - The last 20 replies are kept for the life of the editor, so one closed by `:only`, or replaced on
   screen by a newer reply, can be reopened with `:ClaudeReply`.
 
