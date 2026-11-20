@@ -1,7 +1,7 @@
 -- Explains the selected lines with a throwaway headless Claude session.
 -- The `rundown` skill (~/.claude/skills/rundown) defines what Claude reads and the output shape.
 
-local claude_session = require("claude_session")
+local claude_session = require("claude.session")
 
 local DEFAULT_MODEL = "sonnet"
 -- Above this the file is not sent with the prompt and Claude reads it with its own tools.

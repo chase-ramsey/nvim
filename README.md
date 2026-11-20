@@ -71,30 +71,17 @@ with `prek`, through `mise exec` when mise is installed.
 ### Claude keymaps
 
 These hand code to a throwaway headless [Claude Code](https://claude.com/claude-code) session. They need
-`claude` on `PATH`.
+`claude` on `PATH`. [`lua/claude/README.md`](lua/claude/README.md) has the details: requirements,
+settings, limits and how each one works.
 
 | Key | Command | What it does |
 |---|---|---|
 | `<leader>e` | `:Rundown` | Explains the current line or selection in a floating window. |
-| `<leader>a` | `:ClaudeTask` | Opens a buffer for an instruction, then carries it out with the current line or selection, and the diagnostics on it, as context. `<C-s>` sends it. |
-| `<leader>A` | `:ClaudeReply` | Jumps into the latest reply, reopening it if it was closed. `:ClaudeReply 2` opens the one before it. |
+| `<leader>a` | `:ClaudeTask` | Opens a buffer for an instruction, then carries it out with the current line or selection as context. `<C-s>` sends it. |
+| `<leader>A` | `:ClaudeReply` | Jumps into the latest reply, reopening it if it was closed. |
 | | `:ClaudeTaskCancel` | Stops running tasks. |
 
-In a reply window, `q` closes it and `c` continues the session as an interactive chat in a new terminal
-window. `c` needs `lemonaid`.
-
-- **Tasks run unattended.** A task uses Claude's auto permission mode: it edits files and runs shell
-  commands without asking. The reply lists anything that mode refused, and the files that changed
-  while it ran according to git (your own saves in that time included; ignored files not). Tasks are stopped when neovim exits.
-- **Tasks are limited.** A task gets no MCP servers, stops after spending `vim.g.claude_task_max_usd`
-  (default 5) and is stopped after `vim.g.claude_task_timeout_minutes` (default 30).
-- **Every rundown and task is saved** as a Claude session, so that `c` can resume it.
-- **The rundown's output format** comes from a `rundown` skill in `~/.claude/skills`, which is not part
-  of this repository. Without it, `:Rundown` has no instructions to follow.
-- **Models.** Set `vim.g.rundown_model` (default `sonnet`) or `vim.g.claude_task_model` (default:
-  Claude's own default) to change them.
-
-The logic is in pure functions with tests: `nvim -l tests/claude_helpers_test.lua`.
+A task runs unattended: it edits files and runs shell commands without asking.
 
 ### Acknowledgments
 

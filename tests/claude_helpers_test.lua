@@ -4,9 +4,9 @@
 local root = vim.fs.dirname(vim.fs.dirname(vim.fs.abspath(arg[0])))
 package.path = root .. "/lua/?.lua;" .. package.path
 
-local claude_session = require("claude_session")
-local claude_task = require("claude_task")
-local rundown = require("rundown")
+local claude_session = require("claude.session")
+local claude_task = require("claude.task")
+local rundown = require("claude.rundown")
 
 local failures = 0
 

@@ -1,8 +1,8 @@
 -- Hands an instruction to a throwaway headless Claude session that carries it
 -- out in auto permission mode: it may edit files and run commands unattended.
--- The reply opens in a floating window; see lua/claude_session.lua for its keys.
+-- The reply opens in a floating window; see lua/claude/session.lua for its keys.
 
-local claude_session = require("claude_session")
+local claude_session = require("claude.session")
 
 local MAX_ACTIVITY_WIDTH = 60
 local MAX_DENIAL_WIDTH = 80

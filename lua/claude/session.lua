@@ -1,6 +1,6 @@
 -- Shared parts of the features that run a throwaway headless Claude session and
 -- show its reply in a floating window: the window itself, and continuing the
--- session as an interactive chat. Used by lua/rundown.lua and lua/claude_task.lua.
+-- session as an interactive chat. Used by lua/claude/rundown.lua and lua/claude/task.lua.
 
 local MAX_WIDTH = 90
 local FOOTER = " c: chat about this   q: close "
