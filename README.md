@@ -85,7 +85,7 @@ window. `c` needs `lemonaid`.
 
 - **Tasks run unattended.** A task uses Claude's auto permission mode: it edits files and runs shell
   commands without asking. The reply lists anything that mode refused, and the files that changed
-  according to git. Tasks are stopped when neovim exits.
+  while it ran according to git (your own saves in that time included; ignored files not). Tasks are stopped when neovim exits.
 - **Tasks are limited.** A task gets no MCP servers, stops after spending `vim.g.claude_task_max_usd`
   (default 5) and is stopped after `vim.g.claude_task_timeout_minutes` (default 30).
 - **Every rundown and task is saved** as a Claude session, so that `c` can resume it.

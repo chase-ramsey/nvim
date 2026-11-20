@@ -4,14 +4,6 @@
 
 local claude_session = require("claude_session")
 
-local REPLY_RULES = table.concat({
-  "This is a headless run started from the user's editor. Nobody can answer questions during it,",
-  "so when something is ambiguous, pick the most likely meaning and state the assumption.",
-  "Your final message is shown in a small floating window. Make it a few short lines:",
-  "what you did and anything left undone or blocked. No headings. Do not list changed files:",
-  "the editor appends that list from git. A <diagnostics> block, when present, holds what the",
-  "editor's language tools report on the selected lines, as `line: severity (source): message`.",
-}, " ")
 local MAX_ACTIVITY_WIDTH = 60
 local MAX_DENIAL_WIDTH = 80
 local MAX_DIAGNOSTICS = 50
@@ -115,14 +107,33 @@ local function build_task_input(instruction, context)
   return table.concat(parts, "\n\n")
 end
 
+---Builds the instructions appended to Claude's system prompt for a task.
+---@param editor_lists_files boolean whether the editor can append the changed files from git;
+---  when it cannot, Claude's reply is the only account of them
+---@return string
+local function reply_rules(editor_lists_files)
+  local files = editor_lists_files and "Do not list changed files: the editor appends that list from git."
+    or "List the files you changed."
+  return table.concat({
+    "This is a headless run started from the user's editor. Nobody can answer questions during it,",
+    "so when something is ambiguous, pick the most likely meaning and state the assumption.",
+    "Your final message is shown in a small floating window. Make it a few short lines:",
+    "what you did and anything left undone or blocked. No headings.",
+    files,
+    "A <diagnostics> block, when present, holds what the editor's language tools report on the",
+    "selected lines, as `line: severity (source): message`.",
+  }, " ")
+end
+
 ---Builds the argv for a headless Claude session in auto permission mode that
 ---reports its progress as one JSON event per line. The session gets no MCP
 ---servers, so an unattended run cannot reach the account's connectors.
 ---@param model string|nil nil uses the model Claude is configured with
 ---@param session_id string UUID, so the reply window can resume the session as a chat
 ---@param max_usd number the session stops once it has spent this much
+---@param editor_lists_files boolean see `reply_rules`
 ---@return string[]
-local function build_task_command(model, session_id, max_usd)
+local function build_task_command(model, session_id, max_usd, editor_lists_files)
   local command = {
     "claude",
     "-p",
@@ -137,7 +148,7 @@ local function build_task_command(model, session_id, max_usd)
     "stream-json",
     "--verbose",
     "--append-system-prompt",
-    REPLY_RULES,
+    reply_rules(editor_lists_files),
   }
   if model then
     vim.list_extend(command, { "--model", model })
@@ -197,7 +208,8 @@ local function result_lines(result_event)
   local reply = type(result_event.result) == "string" and vim.trim(result_event.result) or ""
   if reply == "" then
     local errors = type(result_event.errors) == "table" and result_event.errors or {}
-    local reason = #errors > 0 and table.concat(errors, "; ") or tostring(result_event.subtype or "unknown")
+    local reason = #errors > 0 and table.concat(vim.tbl_map(tostring, errors), "; ")
+      or tostring(result_event.subtype or "unknown")
     reply = "(Claude stopped without a reply: " .. reason .. ")"
   end
   local lines = claude_session.output_lines(reply)
@@ -214,34 +226,20 @@ local function result_lines(result_event)
   return lines
 end
 
----Lists the files a task changed, from git's view before and after it ran.
----@param changed_tracked string output of `git diff --name-only` against the tree as it was before the task
----@param untracked_before string output of `git ls-files --others --exclude-standard` before the task
----@param untracked_after string the same, after the task
+---Lists the files that differ between two snapshots of the working tree.
+---@param diff_output string output of `git diff --name-only` between the two snapshots
 ---@return string[] sorted paths relative to the repository root
-local function changed_files(changed_tracked, untracked_before, untracked_after)
-  local existed = {}
-  for _, path in ipairs(vim.split(untracked_before, "\n", { trimempty = true })) do
-    existed[path] = true
-  end
-  local changed = {}
-  for _, path in ipairs(vim.split(changed_tracked, "\n", { trimempty = true })) do
-    changed[path] = true
-  end
-  for _, path in ipairs(vim.split(untracked_after, "\n", { trimempty = true })) do
-    if not existed[path] then
-      changed[path] = true
-    end
-  end
-  local paths = vim.tbl_keys(changed)
+local function changed_files(diff_output)
+  local paths = vim.split(diff_output, "\n", { trimempty = true })
   table.sort(paths)
   return paths
 end
 
----Appends git's account of what a task changed to its reply, so the list does
----not depend on what Claude says it did.
+---Appends git's account of what changed while a task ran to its reply, so the
+---list does not depend on what Claude says it did. The list covers everything
+---that changed in that time, including the user's own saves.
 ---@param lines string[] the reply
----@param files string[]|nil from `changed_files`; nil when the directory is not a git repository
+---@param files string[]|nil from `changed_files`; nil when there is no snapshot to compare with
 ---@return string[]
 local function with_changed_files(lines, files)
   local result = vim.list_extend({}, lines)
@@ -249,9 +247,9 @@ local function with_changed_files(lines, files)
     return result
   end
   if #files == 0 then
-    return vim.list_extend(result, { "", "No files changed (git)." })
+    return vim.list_extend(result, { "", "No files changed during the task (git)." })
   end
-  vim.list_extend(result, { "", "Changed files (git):" })
+  vim.list_extend(result, { "", "Files changed during the task (git):" })
   for index, path in ipairs(files) do
     if index > MAX_CHANGED_FILES then
       table.insert(result, string.format("- and %d more", #files - MAX_CHANGED_FILES))
@@ -387,54 +385,54 @@ end
 
 ---@param command string[]
 ---@param cwd string
+---@param env table<string, string>|nil
 ---@return string|nil stdout nil when the command failed
-local function git_output(command, cwd)
-  local result = vim.system(command, { cwd = cwd, text = true }):wait()
+local function git_output(command, cwd, env)
+  local result = vim.system(command, { cwd = cwd, text = true, env = env }):wait()
   if result.code ~= 0 then
     return nil
   end
   return result.stdout or ""
 end
 
----@class ClaudeTaskSnapshot
----@field base string a commit holding the tracked files as they were
----@field untracked string the untracked files as they were, one per line
-
----Records the state of the working tree so that `files_changed_since` can say
----what a task changed, including in files that were already modified.
----`git stash create` writes a commit of the tracked changes without touching
----the working tree, the index or the stash list.
+---Records the working tree as a git tree object, so that two snapshots can be
+---compared to say what changed between them. It covers modified, staged,
+---deleted and untracked files, and works before the first commit; ignored
+---files are left out.
+---
+---The tree is built in a temporary index, so the real index, the working tree
+---and the stash are untouched. The temporary index starts as a copy of the
+---real one so that only changed files are read. Git keeps the objects it
+---writes until its next garbage collection.
 ---@param cwd string
----@return ClaudeTaskSnapshot|nil nil outside a git repository, or in one with no commits
+---@return string|nil tree nil outside a git repository
 local function snapshot_worktree(cwd)
   if vim.fn.executable("git") ~= 1 then
     return nil
   end
-  local stash = git_output({ "git", "stash", "create" }, cwd)
-  local base = stash and vim.trim(stash) or ""
-  if base == "" then
-    base = vim.trim(git_output({ "git", "rev-parse", "--verify", "HEAD" }, cwd) or "")
-  end
-  local untracked = git_output({ "git", "ls-files", "--others", "--exclude-standard" }, cwd)
-  if base == "" or not untracked then
+  local index_path = git_output({ "git", "rev-parse", "--path-format=absolute", "--git-path", "index" }, cwd)
+  if not index_path then
     return nil
   end
-  return { base = base, untracked = untracked }
+  local temporary_index = vim.fn.tempname()
+  vim.uv.fs_copyfile(vim.trim(index_path), temporary_index) -- fails harmlessly when there is no index yet
+  local env = { GIT_INDEX_FILE = temporary_index }
+  local tree = git_output({ "git", "add", "--all" }, cwd, env) and git_output({ "git", "write-tree" }, cwd, env)
+  vim.uv.fs_unlink(temporary_index)
+  return tree and vim.trim(tree) or nil
 end
 
----@param snapshot ClaudeTaskSnapshot|nil
+---@param tree_before string|nil from `snapshot_worktree`
 ---@param cwd string
 ---@return string[]|nil nil when there is no snapshot to compare with
-local function files_changed_since(snapshot, cwd)
-  if not snapshot then
+local function files_changed_since(tree_before, cwd)
+  local tree_after = tree_before and snapshot_worktree(cwd)
+  if not tree_before or not tree_after then
     return nil
   end
-  local changed_tracked = git_output({ "git", "diff", "--name-only", snapshot.base }, cwd)
-  local untracked = git_output({ "git", "ls-files", "--others", "--exclude-standard" }, cwd)
-  if not changed_tracked or not untracked then
-    return nil
-  end
-  return changed_files(changed_tracked, snapshot.untracked, untracked)
+  local command = { "git", "-c", "core.quotePath=false", "diff", "--name-only", tree_before, tree_after }
+  local diff_output = git_output(command, cwd)
+  return diff_output and changed_files(diff_output) or nil
 end
 
 ---Starts a headless Claude session on `instruction` and shows its reply when it ends.
@@ -486,7 +484,7 @@ local function run(instruction, context, cwd)
   end)
 
   task.process = vim.system(
-    build_task_command(vim.g.claude_task_model, session_id, max_usd),
+    build_task_command(vim.g.claude_task_model, session_id, max_usd, snapshot ~= nil),
     {
       cwd = cwd,
       text = true,
@@ -500,7 +498,8 @@ local function run(instruction, context, cwd)
       forget_task(task)
       local timed_out = task.timed_out and not result_event
       if task.cancelled then
-        vim.notify("claude: task cancelled")
+        local lines = with_changed_files({ "claude: task cancelled" }, files_changed_since(snapshot, cwd))
+        vim.notify(table.concat(lines, "\n"))
       elseif not result_event and not timed_out then
         vim.notify(failure_message(result.code, result.signal, result.stderr or ""), vim.log.levels.ERROR)
       else
@@ -630,6 +629,7 @@ return {
   diagnostics_in_range = diagnostics_in_range,
   diagnostic_lines = diagnostic_lines,
   build_task_input = build_task_input,
+  reply_rules = reply_rules,
   build_task_command = build_task_command,
   split_complete_lines = split_complete_lines,
   one_line = one_line,
@@ -638,6 +638,8 @@ return {
   changed_files = changed_files,
   with_changed_files = with_changed_files,
   timeout_lines = timeout_lines,
+  snapshot_worktree = snapshot_worktree,
+  files_changed_since = files_changed_since,
   progress_line = progress_line,
   result_lines = result_lines,
   format_elapsed = format_elapsed,

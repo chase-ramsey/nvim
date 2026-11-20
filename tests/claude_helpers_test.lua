@@ -199,10 +199,27 @@ check(
   "do it"
 )
 
-local command = claude_task.build_task_command("opus", "ID", 2.5)
+local command = claude_task.build_task_command("opus", "ID", 2.5, true)
 check("model is passed when set", vim.list_slice(command, #command - 1), { "--model", "opus" })
-check("model is left out by default", vim.tbl_contains(claude_task.build_task_command(nil, "ID", 5), "--model"), false)
+check(
+  "model is left out by default",
+  vim.tbl_contains(claude_task.build_task_command(nil, "ID", 5, true), "--model"),
+  false
+)
 check("tasks get no MCP servers", vim.tbl_contains(command, "--strict-mcp-config"), true)
+check(
+  "with a snapshot Claude leaves the file list to the editor",
+  claude_task.reply_rules(true):find("Do not list changed files", 1, true) ~= nil,
+  true
+)
+check(
+  "without one Claude lists the files itself",
+  {
+    claude_task.reply_rules(false):find("Do not list", 1, true),
+    claude_task.reply_rules(false):find("List the files you changed.", 1, true) ~= nil,
+  },
+  { nil, true }
+)
 check("the spending cap is passed", vim.list_slice(command, 6, 7), { "--max-budget-usd", "2.5" })
 
 check(
@@ -266,20 +283,22 @@ check(
 )
 
 check(
-  "changed files are tracked changes plus new untracked files",
-  claude_task.changed_files("b.py\na.py\n", "old.txt\n", "old.txt\nnew.py\n"),
-  { "a.py", "b.py", "new.py" }
+  "a stop reason that is not a string does not raise",
+  claude_task.result_lines({ errors = { { code = 1 } } })[1]:find("stopped without a reply", 1, true) ~= nil,
+  true
 )
-check("nothing changed", claude_task.changed_files("", "old.txt\n", "old.txt\n"), {})
+
+check("changed files are sorted", claude_task.changed_files("b.py\na.py\né.txt\n"), { "a.py", "b.py", "é.txt" })
+check("nothing changed", claude_task.changed_files(""), {})
 check(
   "changed files are appended to the reply",
   claude_task.with_changed_files({ "done" }, { "a.py", "b.py" }),
-  { "done", "", "Changed files (git):", "- a.py", "- b.py" }
+  { "done", "", "Files changed during the task (git):", "- a.py", "- b.py" }
 )
 check(
   "no changes is said outright",
   claude_task.with_changed_files({ "done" }, {}),
-  { "done", "", "No files changed (git)." }
+  { "done", "", "No files changed during the task (git)." }
 )
 check("outside a repository nothing is appended", claude_task.with_changed_files({ "done" }, nil), { "done" })
 local long_list = {}
