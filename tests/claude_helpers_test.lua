@@ -151,22 +151,59 @@ check("other front ends are not", claude_session.focus_command({ front_end = "we
 
 -- claude_task
 
+---@type ClaudeTaskDiagnostic[]
+local diagnostics = {
+  { line = 9, severity = 2, source = "ruff", message = "unused import" },
+  { line = 4, severity = 1, source = "pyright", message = '"x" is not\n  defined' },
+  { line = 3, severity = 1, message = "syntax error" },
+  { line = 12, severity = 1, source = "pyright", message = "outside the range" },
+}
+local in_range = claude_task.diagnostics_in_range(diagnostics, 3, 9)
+check("diagnostics outside the range are dropped", #in_range, 3)
+check("errors come first, then by line", { in_range[1].line, in_range[2].line, in_range[3].line }, { 3, 4, 9 })
+check(
+  "diagnostics are one line each",
+  claude_task.diagnostic_lines(in_range),
+  { "3: error: syntax error", '4: error (pyright): "x" is not defined', "9: warning (ruff): unused import" }
+)
+
+local many = {}
+for line = 1, 52 do
+  table.insert(many, { line = line, severity = 1, message = "m" })
+end
+local many_lines = claude_task.diagnostic_lines(many)
+check("diagnostics are capped", { #many_lines, many_lines[51] }, { 51, "(2 more not shown)" })
+
 check(
   "task input carries the numbered selection",
-  claude_task.build_task_input("do it", { file = "/a.py", start_line = 3, end_line = 4, selected_lines = { "x", "y" } }),
+  claude_task.build_task_input(
+    "do it",
+    { file = "/a.py", start_line = 3, end_line = 4, selected_lines = { "x", "y" }, diagnostics = {} }
+  ),
   'do it\n\n<context file="/a.py" lines="3-4">\n3\tx\n4\ty\n</context>'
 )
 check(
-  "task input without a file is the instruction",
-  claude_task.build_task_input("do it", { start_line = 1, end_line = 1, selected_lines = {} }),
-  "do it"
+  "task input carries the diagnostics",
+  claude_task.build_task_input("fix", {
+    file = "/a.py",
+    start_line = 3,
+    end_line = 3,
+    selected_lines = { "x" },
+    diagnostics = { { line = 3, severity = 1, source = "pyright", message = "bad" } },
+  }),
+  'fix\n\n<context file="/a.py" lines="3-3">\n3\tx\n</context>\n\n<diagnostics>\n3: error (pyright): bad\n</diagnostics>'
 )
 check(
-  "model is passed when set",
-  vim.list_slice(claude_task.build_task_command("opus", "ID"), 12),
-  { "--model", "opus" }
+  "task input without a file is the instruction",
+  claude_task.build_task_input("do it", { start_line = 1, end_line = 1, selected_lines = {}, diagnostics = {} }),
+  "do it"
 )
-check("model is left out by default", vim.tbl_contains(claude_task.build_task_command(nil, "ID"), "--model"), false)
+
+local command = claude_task.build_task_command("opus", "ID", 2.5)
+check("model is passed when set", vim.list_slice(command, #command - 1), { "--model", "opus" })
+check("model is left out by default", vim.tbl_contains(claude_task.build_task_command(nil, "ID", 5), "--model"), false)
+check("tasks get no MCP servers", vim.tbl_contains(command, "--strict-mcp-config"), true)
+check("the spending cap is passed", vim.list_slice(command, 6, 7), { "--max-budget-usd", "2.5" })
 
 check(
   "complete lines are split from the unfinished one",
@@ -220,7 +257,41 @@ check(
 check(
   "no reply says why",
   claude_task.result_lines({ subtype = "error_max_turns" }),
-  { "(Claude finished without a reply: error_max_turns)" }
+  { "(Claude stopped without a reply: error_max_turns)" }
+)
+check(
+  "a stop reason from Claude is shown",
+  claude_task.result_lines({ subtype = "error_max_budget_usd", errors = { "Reached maximum budget ($5)" } }),
+  { "(Claude stopped without a reply: Reached maximum budget ($5))" }
+)
+
+check(
+  "changed files are tracked changes plus new untracked files",
+  claude_task.changed_files("b.py\na.py\n", "old.txt\n", "old.txt\nnew.py\n"),
+  { "a.py", "b.py", "new.py" }
+)
+check("nothing changed", claude_task.changed_files("", "old.txt\n", "old.txt\n"), {})
+check(
+  "changed files are appended to the reply",
+  claude_task.with_changed_files({ "done" }, { "a.py", "b.py" }),
+  { "done", "", "Changed files (git):", "- a.py", "- b.py" }
+)
+check(
+  "no changes is said outright",
+  claude_task.with_changed_files({ "done" }, {}),
+  { "done", "", "No files changed (git)." }
+)
+check("outside a repository nothing is appended", claude_task.with_changed_files({ "done" }, nil), { "done" })
+local long_list = {}
+for index = 1, 23 do
+  table.insert(long_list, string.format("f%02d.py", index))
+end
+local capped = claude_task.with_changed_files({}, long_list)
+check("a long list of changed files is capped", { #capped, capped[#capped] }, { 23, "- and 3 more" })
+check(
+  "a timeout names the limit",
+  claude_task.timeout_lines(30)[1],
+  "Stopped: the task was still running after 30 minutes."
 )
 
 check("failure by exit code", claude_task.failure_message(2, 0, "bad flag\n"), "claude: task failed (exit 2)\nbad flag")

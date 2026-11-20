@@ -76,7 +76,7 @@ These hand code to a throwaway headless [Claude Code](https://claude.com/claude-
 | Key | Command | What it does |
 |---|---|---|
 | `<leader>e` | `:Rundown` | Explains the current line or selection in a floating window. |
-| `<leader>a` | `:ClaudeTask` | Opens a buffer for an instruction, then carries it out with the current line or selection as context. `<C-s>` sends it. |
+| `<leader>a` | `:ClaudeTask` | Opens a buffer for an instruction, then carries it out with the current line or selection, and the diagnostics on it, as context. `<C-s>` sends it. |
 | `<leader>A` | `:ClaudeReply` | Jumps into the latest reply, reopening it if it was closed. `:ClaudeReply 2` opens the one before it. |
 | | `:ClaudeTaskCancel` | Stops running tasks. |
 
@@ -84,8 +84,10 @@ In a reply window, `q` closes it and `c` continues the session as an interactive
 window. `c` needs `lemonaid`.
 
 - **Tasks run unattended.** A task uses Claude's auto permission mode: it edits files and runs shell
-  commands without asking. The reply lists anything that mode refused. Tasks are stopped when neovim
-  exits.
+  commands without asking. The reply lists anything that mode refused, and the files that changed
+  according to git. Tasks are stopped when neovim exits.
+- **Tasks are limited.** A task gets no MCP servers, stops after spending `vim.g.claude_task_max_usd`
+  (default 5) and is stopped after `vim.g.claude_task_timeout_minutes` (default 30).
 - **Every rundown and task is saved** as a Claude session, so that `c` can resume it.
 - **The rundown's output format** comes from a `rundown` skill in `~/.claude/skills`, which is not part
   of this repository. Without it, `:Rundown` has no instructions to follow.

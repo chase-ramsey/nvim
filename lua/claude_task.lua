@@ -8,23 +8,85 @@ local REPLY_RULES = table.concat({
   "This is a headless run started from the user's editor. Nobody can answer questions during it,",
   "so when something is ambiguous, pick the most likely meaning and state the assumption.",
   "Your final message is shown in a small floating window. Make it a few short lines:",
-  "what you did, which files changed, and anything left undone or blocked. No headings.",
+  "what you did and anything left undone or blocked. No headings. Do not list changed files:",
+  "the editor appends that list from git. A <diagnostics> block, when present, holds what the",
+  "editor's language tools report on the selected lines, as `line: severity (source): message`.",
 }, " ")
 local MAX_ACTIVITY_WIDTH = 60
 local MAX_DENIAL_WIDTH = 80
+local MAX_DIAGNOSTICS = 50
+local MAX_CHANGED_FILES = 20
+-- Limits on an unattended task; `vim.g.claude_task_max_usd` and
+-- `vim.g.claude_task_timeout_minutes` override them.
+local DEFAULT_MAX_USD = 5
+local DEFAULT_TIMEOUT_MINUTES = 30
+local SEVERITY_NAMES = { "error", "warning", "info", "hint" }
 local INPUT_WIDTH = 80
 local INPUT_HEIGHT = 8
 -- The input fields worth showing for a tool call, in order of preference.
 local ACTIVITY_FIELDS = { "file_path", "command", "pattern", "description", "prompt", "url", "query" }
+
+---@class ClaudeTaskDiagnostic
+---@field line integer 1-based
+---@field severity integer 1 (error) to 4 (hint), as in `vim.diagnostic.severity`
+---@field source string|nil the tool that reported it, such as `pyright`
+---@field message string
 
 ---@class ClaudeTaskContext
 ---@field file string|nil absolute path of the buffer the task was started from
 ---@field start_line integer 1-based, inclusive
 ---@field end_line integer 1-based, inclusive
 ---@field selected_lines string[] the text of that range
+---@field diagnostics ClaudeTaskDiagnostic[] what the editor reports on that range
 
----Builds the text sent to Claude on stdin: the instruction, then the lines the
----cursor or selection was on. Claude reads anything else it needs itself.
+---Collapses `text` onto one line.
+---@param text string
+---@return string
+local function one_line(text)
+  return vim.trim((text:gsub("%s+", " ")))
+end
+
+---Keeps the diagnostics on the given lines, most severe first, then by line.
+---@param diagnostics ClaudeTaskDiagnostic[]
+---@param start_line integer 1-based, inclusive
+---@param end_line integer 1-based, inclusive
+---@return ClaudeTaskDiagnostic[]
+local function diagnostics_in_range(diagnostics, start_line, end_line)
+  local kept = {}
+  for _, diagnostic in ipairs(diagnostics) do
+    if diagnostic.line >= start_line and diagnostic.line <= end_line then
+      table.insert(kept, diagnostic)
+    end
+  end
+  table.sort(kept, function(left, right)
+    if left.severity ~= right.severity then
+      return left.severity < right.severity
+    end
+    return left.line < right.line
+  end)
+  return kept
+end
+
+---Formats diagnostics one per line, such as `12: error (pyright): "x" is not defined`.
+---@param diagnostics ClaudeTaskDiagnostic[]
+---@return string[]
+local function diagnostic_lines(diagnostics)
+  local lines = {}
+  for index, diagnostic in ipairs(diagnostics) do
+    if index > MAX_DIAGNOSTICS then
+      table.insert(lines, string.format("(%d more not shown)", #diagnostics - MAX_DIAGNOSTICS))
+      break
+    end
+    local severity = SEVERITY_NAMES[diagnostic.severity] or "error"
+    local source = diagnostic.source and (" (" .. diagnostic.source .. ")") or ""
+    table.insert(lines, string.format("%d: %s%s: %s", diagnostic.line, severity, source, one_line(diagnostic.message)))
+  end
+  return lines
+end
+
+---Builds the text sent to Claude on stdin: the instruction, the lines the cursor
+---or selection was on, and what the editor's diagnostics say about those lines.
+---Claude reads anything else it needs itself.
 ---@param instruction string
 ---@param context ClaudeTaskContext
 ---@return string
@@ -36,27 +98,39 @@ local function build_task_input(instruction, context)
   for offset, line in ipairs(context.selected_lines) do
     table.insert(numbered, (context.start_line + offset - 1) .. "\t" .. line)
   end
-  return string.format(
-    '%s\n\n<context file="%s" lines="%d-%d">\n%s\n</context>',
+  local parts = {
     instruction,
-    context.file,
-    context.start_line,
-    context.end_line,
-    table.concat(numbered, "\n")
-  )
+    string.format(
+      '<context file="%s" lines="%d-%d">\n%s\n</context>',
+      context.file,
+      context.start_line,
+      context.end_line,
+      table.concat(numbered, "\n")
+    ),
+  }
+  if #context.diagnostics > 0 then
+    local lines = table.concat(diagnostic_lines(context.diagnostics), "\n")
+    table.insert(parts, "<diagnostics>\n" .. lines .. "\n</diagnostics>")
+  end
+  return table.concat(parts, "\n\n")
 end
 
 ---Builds the argv for a headless Claude session in auto permission mode that
----reports its progress as one JSON event per line.
+---reports its progress as one JSON event per line. The session gets no MCP
+---servers, so an unattended run cannot reach the account's connectors.
 ---@param model string|nil nil uses the model Claude is configured with
 ---@param session_id string UUID, so the reply window can resume the session as a chat
+---@param max_usd number the session stops once it has spent this much
 ---@return string[]
-local function build_task_command(model, session_id)
+local function build_task_command(model, session_id, max_usd)
   local command = {
     "claude",
     "-p",
     "--permission-mode",
     "auto",
+    "--strict-mcp-config",
+    "--max-budget-usd",
+    tostring(max_usd),
     "--session-id",
     session_id,
     "--output-format",
@@ -80,13 +154,6 @@ local function split_complete_lines(pending, chunk)
   local lines = vim.split(pending .. chunk, "\n", { plain = true })
   local remainder = table.remove(lines)
   return lines, remainder
-end
-
----Collapses `text` onto one line.
----@param text string
----@return string
-local function one_line(text)
-  return vim.trim((text:gsub("%s+", " ")))
 end
 
 ---Describes what Claude is doing, from one stream-json event.
@@ -129,7 +196,9 @@ end
 local function result_lines(result_event)
   local reply = type(result_event.result) == "string" and vim.trim(result_event.result) or ""
   if reply == "" then
-    reply = "(Claude finished without a reply: " .. tostring(result_event.subtype or "unknown") .. ")"
+    local errors = type(result_event.errors) == "table" and result_event.errors or {}
+    local reason = #errors > 0 and table.concat(errors, "; ") or tostring(result_event.subtype or "unknown")
+    reply = "(Claude stopped without a reply: " .. reason .. ")"
   end
   local lines = claude_session.output_lines(reply)
   local denials = type(result_event.permission_denials) == "table" and result_event.permission_denials or {}
@@ -143,6 +212,64 @@ local function result_lines(result_event)
     end
   end
   return lines
+end
+
+---Lists the files a task changed, from git's view before and after it ran.
+---@param changed_tracked string output of `git diff --name-only` against the tree as it was before the task
+---@param untracked_before string output of `git ls-files --others --exclude-standard` before the task
+---@param untracked_after string the same, after the task
+---@return string[] sorted paths relative to the repository root
+local function changed_files(changed_tracked, untracked_before, untracked_after)
+  local existed = {}
+  for _, path in ipairs(vim.split(untracked_before, "\n", { trimempty = true })) do
+    existed[path] = true
+  end
+  local changed = {}
+  for _, path in ipairs(vim.split(changed_tracked, "\n", { trimempty = true })) do
+    changed[path] = true
+  end
+  for _, path in ipairs(vim.split(untracked_after, "\n", { trimempty = true })) do
+    if not existed[path] then
+      changed[path] = true
+    end
+  end
+  local paths = vim.tbl_keys(changed)
+  table.sort(paths)
+  return paths
+end
+
+---Appends git's account of what a task changed to its reply, so the list does
+---not depend on what Claude says it did.
+---@param lines string[] the reply
+---@param files string[]|nil from `changed_files`; nil when the directory is not a git repository
+---@return string[]
+local function with_changed_files(lines, files)
+  local result = vim.list_extend({}, lines)
+  if not files then
+    return result
+  end
+  if #files == 0 then
+    return vim.list_extend(result, { "", "No files changed (git)." })
+  end
+  vim.list_extend(result, { "", "Changed files (git):" })
+  for index, path in ipairs(files) do
+    if index > MAX_CHANGED_FILES then
+      table.insert(result, string.format("- and %d more", #files - MAX_CHANGED_FILES))
+      break
+    end
+    table.insert(result, "- " .. path)
+  end
+  return result
+end
+
+---Builds the reply shown for a task that was stopped at its time limit.
+---@param minutes number
+---@return string[]
+local function timeout_lines(minutes)
+  return {
+    string.format("Stopped: the task was still running after %s minutes.", tostring(minutes)),
+    "Edits it had already made are on disk. Press c to continue it as a chat.",
+  }
 end
 
 ---Decodes one line of stream-json output.
@@ -186,6 +313,7 @@ end
 ---@field activity string
 ---@field process vim.SystemObj
 ---@field cancelled boolean
+---@field timed_out boolean
 
 ---@type ClaudeRunningTask[]
 local running_tasks = {}
@@ -257,6 +385,58 @@ local function forget_task(task)
   render_indicator()
 end
 
+---@param command string[]
+---@param cwd string
+---@return string|nil stdout nil when the command failed
+local function git_output(command, cwd)
+  local result = vim.system(command, { cwd = cwd, text = true }):wait()
+  if result.code ~= 0 then
+    return nil
+  end
+  return result.stdout or ""
+end
+
+---@class ClaudeTaskSnapshot
+---@field base string a commit holding the tracked files as they were
+---@field untracked string the untracked files as they were, one per line
+
+---Records the state of the working tree so that `files_changed_since` can say
+---what a task changed, including in files that were already modified.
+---`git stash create` writes a commit of the tracked changes without touching
+---the working tree, the index or the stash list.
+---@param cwd string
+---@return ClaudeTaskSnapshot|nil nil outside a git repository, or in one with no commits
+local function snapshot_worktree(cwd)
+  if vim.fn.executable("git") ~= 1 then
+    return nil
+  end
+  local stash = git_output({ "git", "stash", "create" }, cwd)
+  local base = stash and vim.trim(stash) or ""
+  if base == "" then
+    base = vim.trim(git_output({ "git", "rev-parse", "--verify", "HEAD" }, cwd) or "")
+  end
+  local untracked = git_output({ "git", "ls-files", "--others", "--exclude-standard" }, cwd)
+  if base == "" or not untracked then
+    return nil
+  end
+  return { base = base, untracked = untracked }
+end
+
+---@param snapshot ClaudeTaskSnapshot|nil
+---@param cwd string
+---@return string[]|nil nil when there is no snapshot to compare with
+local function files_changed_since(snapshot, cwd)
+  if not snapshot then
+    return nil
+  end
+  local changed_tracked = git_output({ "git", "diff", "--name-only", snapshot.base }, cwd)
+  local untracked = git_output({ "git", "ls-files", "--others", "--exclude-standard" }, cwd)
+  if not changed_tracked or not untracked then
+    return nil
+  end
+  return changed_files(changed_tracked, snapshot.untracked, untracked)
+end
+
 ---Starts a headless Claude session on `instruction` and shows its reply when it ends.
 ---@param instruction string
 ---@param context ClaudeTaskContext
@@ -267,7 +447,10 @@ local function run(instruction, context, cwd)
   ---@type table|nil
   local result_event = nil
   ---@type ClaudeRunningTask
-  local task = { started = os.time(), activity = "starting", cancelled = false }
+  local task = { started = os.time(), activity = "starting", cancelled = false, timed_out = false }
+  local max_usd = vim.g.claude_task_max_usd or DEFAULT_MAX_USD
+  local timeout_minutes = vim.g.claude_task_timeout_minutes or DEFAULT_TIMEOUT_MINUTES
+  local snapshot = snapshot_worktree(cwd)
 
   ---@param line string
   local function read_line(line)
@@ -294,25 +477,43 @@ local function run(instruction, context, cwd)
     end
   end
 
+  -- Not `vim.system`'s own timeout: Claude exits with its own code on SIGTERM,
+  -- so the exit code cannot tell a time limit from any other failure.
+  local time_limit = assert(vim.uv.new_timer())
+  time_limit:start(math.floor(timeout_minutes * 60 * 1000), 0, function()
+    task.timed_out = true
+    task.process:kill("sigterm")
+  end)
+
   task.process = vim.system(
-    build_task_command(vim.g.claude_task_model, session_id),
-    { cwd = cwd, text = true, stdin = build_task_input(instruction, context), stdout = on_stdout },
+    build_task_command(vim.g.claude_task_model, session_id, max_usd),
+    {
+      cwd = cwd,
+      text = true,
+      stdin = build_task_input(instruction, context),
+      stdout = on_stdout,
+    },
     vim.schedule_wrap(function(result)
+      time_limit:stop()
+      time_limit:close()
       read_line(pending_output) -- a last line with no newline after it
       forget_task(task)
+      local timed_out = task.timed_out and not result_event
       if task.cancelled then
         vim.notify("claude: task cancelled")
-      elseif not result_event then
+      elseif not result_event and not timed_out then
         vim.notify(failure_message(result.code, result.signal, result.stderr or ""), vim.log.levels.ERROR)
       else
-        claude_session.show_reply(result_lines(result_event), {
+        local reply = result_event and result_lines(result_event) or timeout_lines(timeout_minutes)
+        claude_session.show_reply(with_changed_files(reply, files_changed_since(snapshot, cwd)), {
           title = "claude task",
           session_id = session_id,
           cwd = cwd,
           focus = false,
           placement = "corner",
         })
-        vim.notify("claude: task finished, :ClaudeReply to open the reply")
+        local outcome = timed_out and "stopped at its time limit" or "finished"
+        vim.notify("claude: task " .. outcome .. ", :ClaudeReply to open the reply")
       end
       -- The task may have edited files that are open. Last, and guarded, because
       -- it raises in some states (the command-line window) and must not cost the reply.
@@ -321,6 +522,21 @@ local function run(instruction, context, cwd)
   )
   table.insert(running_tasks, task)
   render_indicator()
+end
+
+---@param bufnr integer
+---@return ClaudeTaskDiagnostic[]
+local function buffer_diagnostics(bufnr)
+  local diagnostics = {}
+  for _, diagnostic in ipairs(vim.diagnostic.get(bufnr)) do
+    table.insert(diagnostics, {
+      line = diagnostic.lnum + 1,
+      severity = diagnostic.severity,
+      source = diagnostic.source,
+      message = diagnostic.message,
+    })
+  end
+  return diagnostics
 end
 
 ---Opens a floating scratch buffer for the instruction. The lines `start_line`
@@ -342,9 +558,14 @@ local function open_input(start_line, end_line)
     start_line = start_line,
     end_line = end_line,
     selected_lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false),
+    diagnostics = diagnostics_in_range(buffer_diagnostics(0), start_line, end_line),
   }
   local cwd = (is_file and (vim.fs.root(0, ".git") or vim.fs.dirname(file))) or vim.fn.getcwd()
   local title = is_file and string.format("%s:%d-%d", vim.fs.basename(file), start_line, end_line) or "no file"
+  if is_file and #context.diagnostics > 0 then
+    local noun = #context.diagnostics == 1 and "diagnostic" or "diagnostics"
+    title = string.format("%s · %d %s", title, #context.diagnostics, noun)
+  end
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
@@ -406,12 +627,17 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
 })
 
 return {
+  diagnostics_in_range = diagnostics_in_range,
+  diagnostic_lines = diagnostic_lines,
   build_task_input = build_task_input,
   build_task_command = build_task_command,
   split_complete_lines = split_complete_lines,
   one_line = one_line,
   decode_event = decode_event,
   failure_message = failure_message,
+  changed_files = changed_files,
+  with_changed_files = with_changed_files,
+  timeout_lines = timeout_lines,
   progress_line = progress_line,
   result_lines = result_lines,
   format_elapsed = format_elapsed,
