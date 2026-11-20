@@ -280,14 +280,14 @@ local function run(start_line, end_line)
         local in_starting_window = vim.api.nvim_get_current_win() == starting_window
           and vim.api.nvim_get_current_buf() == starting_buffer
         local focus = should_focus_reply(vim.api.nvim_get_mode().mode, in_starting_window)
-        claude_session.show_reply(claude_session.output_lines(result.stdout or ""), {
+        local shown = claude_session.show_reply(claude_session.output_lines(result.stdout or ""), {
           title = "rundown",
           session_id = session_id,
           cwd = cwd,
           focus = focus,
           placement = focus and "cursor" or "corner",
         })
-        if not focus then
+        if not (shown and focus) then
           vim.notify("rundown: ready, :ClaudeReply to open it")
         end
       end)

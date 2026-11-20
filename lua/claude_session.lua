@@ -256,19 +256,37 @@ local function close_replies(keep)
   end
 end
 
+---Returns whether the cursor is in a reply window.
+---@return boolean
+local function is_reading_reply()
+  local current_window = vim.api.nvim_get_current_win()
+  for _, reply in ipairs(replies) do
+    if reply.window == current_window then
+      return true
+    end
+  end
+  return false
+end
+
 ---Stores Claude's reply and shows it in a floating window. `open_stored_reply`
 ---brings back a reply whose window has been closed.
 ---@param lines string[]
 ---@param options ClaudeReplyOptions
+---@return boolean shown false when a reply is being read, so the new one was stored without a window
 local function show_reply(lines, options)
-  close_replies(vim.api.nvim_get_current_win()) -- a reply being read stays open
   ---@type ClaudeReply
   local reply = { lines = lines, title = options.title, session_id = options.session_id, cwd = options.cwd }
+  -- Stored before any window changes, so a failure there cannot lose it.
   table.insert(replies, reply)
   while #replies > MAX_REPLIES do
     table.remove(replies, 1)
   end
+  if is_reading_reply() then
+    return false -- a window here would cover the reply being read
+  end
+  close_replies(nil)
   open_reply(reply, options.focus, options.placement)
+  return true
 end
 
 ---Moves the cursor into a stored reply, reopening its window if it was closed.
