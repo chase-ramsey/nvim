@@ -40,3 +40,26 @@ end
 
 vim.api.nvim_create_user_command("Prek", prek_current_file, { desc = "Run prek hooks on the current file" })
 vim.keymap.set("n", "<leader>k", prek_current_file, { desc = "Run prek hooks on the current file" })
+
+-- Explain the current line or selection with a headless Claude session (see lua/claude/rundown.lua).
+vim.api.nvim_create_user_command("Rundown", function(opts)
+  require("claude.rundown").run(opts.line1, opts.line2)
+end, { range = true, desc = "Explain the given lines with Claude" })
+vim.keymap.set("n", "<leader>e", "<cmd>Rundown<CR>", { desc = "Explain the current line with Claude" })
+vim.keymap.set("x", "<leader>e", ":Rundown<CR>", { silent = true, desc = "Explain the selection with Claude" })
+
+-- Give Claude an instruction to carry out unattended, with the current line or
+-- selection as context (see lua/claude/task.lua).
+vim.api.nvim_create_user_command("ClaudeTask", function(opts)
+  require("claude.task").open_input(opts.line1, opts.line2)
+end, { range = true, desc = "Give Claude a task about the given lines" })
+-- A count picks an earlier reply: `:ClaudeReply 2` is the one before the newest.
+vim.api.nvim_create_user_command("ClaudeReply", function(opts)
+  require("claude.session").open_stored_reply(opts.count > 0 and opts.count or 1)
+end, { count = true, desc = "Jump into the latest Claude reply, reopening it if it was closed" })
+vim.api.nvim_create_user_command("ClaudeTaskCancel", function()
+  require("claude.task").cancel()
+end, { desc = "Stop running Claude tasks" })
+vim.keymap.set("n", "<leader>a", "<cmd>ClaudeTask<CR>", { desc = "Give Claude a task about the current line" })
+vim.keymap.set("x", "<leader>a", ":ClaudeTask<CR>", { silent = true, desc = "Give Claude a task about the selection" })
+vim.keymap.set("n", "<leader>A", "<cmd>ClaudeReply<CR>", { desc = "Jump into the latest Claude reply" })

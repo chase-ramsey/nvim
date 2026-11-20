@@ -68,6 +68,21 @@ contains them, so their versions match the project's pins.
 `:Prek` (`<leader>k`) runs the repo's pre-commit hooks on the current file
 with `prek`, through `mise exec` when mise is installed.
 
+### Claude keymaps
+
+These hand code to a throwaway headless [Claude Code](https://claude.com/claude-code) session. They need
+`claude` on `PATH`. [`lua/claude/README.md`](lua/claude/README.md) has the details: requirements,
+settings, limits and how each one works.
+
+| Key | Command | What it does |
+|---|---|---|
+| `<leader>e` | `:Rundown` | Explains the current line or selection in a floating window. |
+| `<leader>a` | `:ClaudeTask` | Opens a buffer for an instruction, then carries it out with the current line or selection as context. `<C-s>` sends it. |
+| `<leader>A` | `:ClaudeReply` | Jumps into the latest reply, reopening it if it was closed. |
+| | `:ClaudeTaskCancel` | Stops running tasks. |
+
+A task runs unattended: it edits files and runs shell commands without asking.
+
 ### Acknowledgments
 
 h/t to YouTube user [typecraft](https://www.youtube.com/@typecraft_dev) for his awesome [video series](https://www.youtube.com/playlist?list=PLsz00TDipIffreIaUNk64KxTIkQaGguqn) on getting set up in
