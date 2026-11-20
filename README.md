@@ -68,6 +68,32 @@ contains them, so their versions match the project's pins.
 `:Prek` (`<leader>k`) runs the repo's pre-commit hooks on the current file
 with `prek`, through `mise exec` when mise is installed.
 
+### Claude keymaps
+
+These hand code to a throwaway headless [Claude Code](https://claude.com/claude-code) session. They need
+`claude` on `PATH`.
+
+| Key | Command | What it does |
+|---|---|---|
+| `<leader>e` | `:Rundown` | Explains the current line or selection in a floating window. |
+| `<leader>a` | `:ClaudeTask` | Opens a buffer for an instruction, then carries it out with the current line or selection as context. `<C-s>` sends it. |
+| `<leader>A` | `:ClaudeReply` | Jumps into the latest reply, reopening it if it was closed. `:ClaudeReply 2` opens the one before it. |
+| | `:ClaudeTaskCancel` | Stops running tasks. |
+
+In a reply window, `q` closes it and `c` continues the session as an interactive chat in a new terminal
+window. `c` needs `lemonaid`.
+
+- **Tasks run unattended.** A task uses Claude's auto permission mode: it edits files and runs shell
+  commands without asking. The reply lists anything that mode refused. Tasks are stopped when neovim
+  exits.
+- **Every rundown and task is saved** as a Claude session, so that `c` can resume it.
+- **The rundown's output format** comes from a `rundown` skill in `~/.claude/skills`, which is not part
+  of this repository. Without it, `:Rundown` has no instructions to follow.
+- **Models.** Set `vim.g.rundown_model` (default `sonnet`) or `vim.g.claude_task_model` (default:
+  Claude's own default) to change them.
+
+The logic is in pure functions with tests: `nvim -l tests/claude_helpers_test.lua`.
+
 ### Acknowledgments
 
 h/t to YouTube user [typecraft](https://www.youtube.com/@typecraft_dev) for his awesome [video series](https://www.youtube.com/playlist?list=PLsz00TDipIffreIaUNk64KxTIkQaGguqn) on getting set up in

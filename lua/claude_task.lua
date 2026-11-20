@@ -11,6 +11,7 @@ local REPLY_RULES = table.concat({
   "what you did, which files changed, and anything left undone or blocked. No headings.",
 }, " ")
 local MAX_ACTIVITY_WIDTH = 60
+local MAX_DENIAL_WIDTH = 80
 local INPUT_WIDTH = 80
 local INPUT_HEIGHT = 8
 -- The input fields worth showing for a tool call, in order of preference.
@@ -81,16 +82,11 @@ local function split_complete_lines(pending, chunk)
   return lines, remainder
 end
 
----Shortens `text` to one line of at most `width` characters.
+---Collapses `text` onto one line.
 ---@param text string
----@param width integer
 ---@return string
-local function one_line(text, width)
-  local flat = vim.trim((text:gsub("%s+", " ")))
-  if #flat <= width then
-    return flat
-  end
-  return flat:sub(1, width - 1) .. "…"
+local function one_line(text)
+  return vim.trim((text:gsub("%s+", " ")))
 end
 
 ---Describes what Claude is doing, from one stream-json event.
@@ -98,11 +94,11 @@ end
 ---@param cwd string removed from the front of paths, to keep the line short
 ---@return string|nil nil for an event that does not change what Claude is doing
 local function progress_line(event, cwd)
-  if event.type ~= "assistant" or type(event.message) ~= "table" then
+  if event.type ~= "assistant" or type(event.message) ~= "table" or type(event.message.content) ~= "table" then
     return nil
   end
   local activity = nil
-  for _, block in ipairs(event.message.content or {}) do
+  for _, block in ipairs(event.message.content) do
     if block.type == "tool_use" then
       local detail = ""
       for _, field in ipairs(ACTIVITY_FIELDS) do
@@ -115,7 +111,7 @@ local function progress_line(event, cwd)
       if detail:sub(1, #cwd + 1) == cwd .. "/" then
         detail = detail:sub(#cwd + 2)
       end
-      activity = one_line(block.name .. " " .. detail, MAX_ACTIVITY_WIDTH)
+      activity = one_line(block.name .. " " .. detail)
     elseif block.type == "text" then
       activity = "writing"
     elseif block.type == "thinking" and not activity then
@@ -127,6 +123,7 @@ end
 
 ---Builds the lines of the reply window from the final stream-json event.
 ---Actions that auto mode refused are listed, because the reply may not mention them.
+---Not callable from a `vim.system` output callback (see `claude_session.truncate`).
 ---@param result_event table the event with `type == "result"`
 ---@return string[]
 local function result_lines(result_event)
@@ -141,10 +138,32 @@ local function result_lines(result_event)
     for _, denial in ipairs(denials) do
       local input = type(denial.tool_input) == "table" and denial.tool_input or {}
       local detail = input.command or input.file_path or ""
-      table.insert(lines, "- " .. one_line(tostring(denial.tool_name) .. " " .. tostring(detail), 80))
+      local action = one_line(tostring(denial.tool_name) .. " " .. tostring(detail))
+      table.insert(lines, "- " .. claude_session.truncate(action, MAX_DENIAL_WIDTH))
     end
   end
   return lines
+end
+
+---Decodes one line of stream-json output.
+---@param line string
+---@return table|nil event nil for a line that is not a JSON object
+local function decode_event(line)
+  local ok, event = pcall(vim.json.decode, line)
+  if ok and type(event) == "table" then
+    return event
+  end
+  return nil
+end
+
+---Describes a task that ended without a reply.
+---@param code integer exit code
+---@param signal integer the signal that ended it, or 0
+---@param stderr string
+---@return string
+local function failure_message(code, signal, stderr)
+  local how = signal ~= 0 and ("killed by signal " .. signal) or ("exit " .. code)
+  return vim.trim("claude: task failed (" .. how .. ")\n" .. vim.trim(stderr))
 end
 
 ---@param seconds integer
@@ -174,9 +193,6 @@ local running_tasks = {}
 local indicator_window = nil
 ---@type uv.uv_timer_t|nil
 local indicator_timer = nil
----@type integer|nil
-local latest_result_window = nil
-
 local function close_indicator()
   if indicator_timer then
     indicator_timer:stop()
@@ -198,7 +214,8 @@ local function render_indicator()
   local lines = {}
   local width = 1
   for _, task in ipairs(running_tasks) do
-    local line = indicator_line(os.time() - task.started, task.activity)
+    local activity = claude_session.truncate(task.activity, MAX_ACTIVITY_WIDTH)
+    local line = indicator_line(os.time() - task.started, activity)
     table.insert(lines, line)
     width = math.max(width, vim.fn.strdisplaywidth(line))
   end
@@ -252,8 +269,20 @@ local function run(instruction, context, cwd)
   ---@type ClaudeRunningTask
   local task = { started = os.time(), activity = "starting", cancelled = false }
 
+  ---@param line string
+  local function read_line(line)
+    local event = decode_event(line)
+    if not event then
+      return
+    end
+    if event.type == "result" then
+      result_event = event
+    end
+    task.activity = progress_line(event, cwd) or task.activity
+  end
+
   ---@param _ string|nil error
-  ---@param chunk string|nil
+  ---@param chunk string|nil nil at the end of the stream
   local function on_stdout(_, chunk)
     if not chunk then
       return
@@ -261,13 +290,7 @@ local function run(instruction, context, cwd)
     local lines
     lines, pending_output = split_complete_lines(pending_output, chunk)
     for _, line in ipairs(lines) do
-      local ok, event = pcall(vim.json.decode, line)
-      if ok and type(event) == "table" then
-        if event.type == "result" then
-          result_event = event
-        end
-        task.activity = progress_line(event, cwd) or task.activity
-      end
+      read_line(line)
     end
   end
 
@@ -275,25 +298,25 @@ local function run(instruction, context, cwd)
     build_task_command(vim.g.claude_task_model, session_id),
     { cwd = cwd, text = true, stdin = build_task_input(instruction, context), stdout = on_stdout },
     vim.schedule_wrap(function(result)
+      read_line(pending_output) -- a last line with no newline after it
       forget_task(task)
-      vim.cmd("checktime") -- the task may have edited files that are open
       if task.cancelled then
         vim.notify("claude: task cancelled")
-        return
+      elseif not result_event then
+        vim.notify(failure_message(result.code, result.signal, result.stderr or ""), vim.log.levels.ERROR)
+      else
+        claude_session.show_reply(result_lines(result_event), {
+          title = "claude task",
+          session_id = session_id,
+          cwd = cwd,
+          focus = false,
+          placement = "corner",
+        })
+        vim.notify("claude: task finished, :ClaudeReply to open the reply")
       end
-      if not result_event then
-        local message = vim.trim(result.stderr or "")
-        vim.notify("claude: task failed (exit " .. result.code .. ")\n" .. message, vim.log.levels.ERROR)
-        return
-      end
-      latest_result_window = claude_session.show_float(result_lines(result_event), {
-        title = "claude task",
-        session_id = session_id,
-        cwd = cwd,
-        focus = false,
-        placement = "corner",
-      })
-      vim.notify("claude: task finished, :ClaudeTaskResult to open the reply")
+      -- The task may have edited files that are open. Last, and guarded, because
+      -- it raises in some states (the command-line window) and must not cost the reply.
+      pcall(vim.cmd, "checktime")
     end)
   )
   table.insert(running_tasks, task)
@@ -305,6 +328,9 @@ end
 ---@param start_line integer 1-based, inclusive
 ---@param end_line integer 1-based, inclusive
 local function open_input(start_line, end_line)
+  if not claude_session.require_executables("claude task", { "claude" }) then
+    return
+  end
   local file = vim.api.nvim_buf_get_name(0)
   local is_file = file ~= "" and vim.bo.buftype == ""
   if is_file then
@@ -356,18 +382,10 @@ local function open_input(start_line, end_line)
   vim.cmd("startinsert")
 end
 
----Moves the cursor into the most recent reply window, where `c` and `q` work.
-local function focus_result()
-  if latest_result_window and vim.api.nvim_win_is_valid(latest_result_window) then
-    vim.api.nvim_set_current_win(latest_result_window)
-    return
-  end
-  vim.notify("claude: no task reply is open", vim.log.levels.WARN)
-end
-
 ---Stops every running task. Edits a task already made stay on disk.
-local function cancel()
-  if #running_tasks == 0 then
+---@param quiet boolean|nil true skips the warning when nothing is running
+local function cancel(quiet)
+  if #running_tasks == 0 and not quiet then
     vim.notify("claude: no task is running", vim.log.levels.WARN)
     return
   end
@@ -377,16 +395,28 @@ local function cancel()
   end
 end
 
+-- A task's reply can only be shown in the editor that started it, so tasks do
+-- not outlive it: left running they would finish, or fail, with nobody told.
+vim.api.nvim_create_autocmd("VimLeavePre", {
+  group = vim.api.nvim_create_augroup("claude_task_stop_on_exit", { clear = true }),
+  callback = function()
+    cancel(true)
+  end,
+  desc = "Stop running Claude tasks when neovim exits",
+})
+
 return {
   build_task_input = build_task_input,
   build_task_command = build_task_command,
   split_complete_lines = split_complete_lines,
+  one_line = one_line,
+  decode_event = decode_event,
+  failure_message = failure_message,
   progress_line = progress_line,
   result_lines = result_lines,
   format_elapsed = format_elapsed,
   indicator_line = indicator_line,
   run = run,
   open_input = open_input,
-  focus_result = focus_result,
   cancel = cancel,
 }

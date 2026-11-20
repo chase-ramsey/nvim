@@ -7,6 +7,8 @@ local DEFAULT_MODEL = "sonnet"
 -- Above this the file is not sent with the prompt and Claude reads it with its own tools.
 local MAX_INLINE_FILE_LINES = 2000
 local MAX_CONSUMER_LINES = 150
+-- How far into a selection to look for a definition that starts inside it.
+local MAX_SYMBOL_SCAN_LINES = 50
 -- Treesitter node types that define something callers refer to by name.
 local DEFINITION_TYPE_PATTERNS = { "function", "method", "class" }
 -- Globs for test code, in the form `rg --glob` takes.
@@ -31,15 +33,62 @@ local function build_prompt(file, start_line, end_line)
 end
 
 ---Returns whether a treesitter node type defines something callers refer to by name.
+---Call nodes are excluded: Lua's `function_call` has a `name` field too, and it names the callee.
 ---@param node_type string
 ---@return boolean
 local function is_definition_type(node_type)
+  if node_type:find("call", 1, true) then
+    return false
+  end
   for _, pattern in ipairs(DEFINITION_TYPE_PATTERNS) do
     if node_type:find(pattern, 1, true) then
       return true
     end
   end
   return false
+end
+
+---@class RundownDefinition
+---@field name string may be dotted, such as `M.run`
+---@field start_line integer 1-based line the definition starts on
+
+---Orders the names of the definitions around a selection by how well they name
+---what was selected. A definition that starts inside the selection comes first,
+---so that selecting a function along with its decorator or the comment above it
+---names that function; the definitions enclosing the first line follow.
+---@param chains RundownDefinition[][] for each selected line in order, the definitions enclosing it, innermost first
+---@param start_line integer 1-based, inclusive
+---@param end_line integer 1-based, inclusive
+---@return string[]
+local function selection_definition_names(chains, start_line, end_line)
+  local names = {}
+  for _, chain in ipairs(chains) do
+    -- the outermost definition starting in the selection: a selected class, not its first method
+    for index = #chain, 1, -1 do
+      local definition = chain[index]
+      if definition.start_line >= start_line and definition.start_line <= end_line then
+        table.insert(names, definition.name)
+        break
+      end
+    end
+    if #names > 0 then
+      break
+    end
+  end
+  for _, definition in ipairs(chains[1] or {}) do
+    table.insert(names, definition.name)
+  end
+  return names
+end
+
+---Decides whether the reply window may take the cursor. It arrives seconds
+---after it was asked for, so it must not interrupt typing or follow the cursor
+---to a different window.
+---@param mode string from `vim.api.nvim_get_mode().mode`
+---@param in_starting_window boolean whether the cursor is still in the window and buffer the rundown started from
+---@return boolean
+local function should_focus_reply(mode, in_starting_window)
+  return mode == "n" and in_starting_window
 end
 
 ---Picks the name to search for consumers of, from the names of the definitions
@@ -154,29 +203,43 @@ local function build_command(prompt, model, session_id)
   }
 end
 
----Returns the names of the definitions that enclose a line, innermost first.
----Empty when the buffer has no treesitter parser.
+---Returns the definitions that enclose a line, innermost first.
 ---@param bufnr integer
 ---@param line integer 1-based
+---@return RundownDefinition[]
+local function definitions_at(bufnr, line)
+  local text = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
+  local column = #(text:match("^%s*") or "")
+  local node = vim.treesitter.get_node({ bufnr = bufnr, pos = { line - 1, column } })
+  local definitions = {}
+  while node do
+    local name_node = node:field("name")[1]
+    if name_node and is_definition_type(node:type()) then
+      local start_row = node:range()
+      table.insert(definitions, { name = vim.treesitter.get_node_text(name_node, bufnr), start_line = start_row + 1 })
+    end
+    node = node:parent()
+  end
+  return definitions
+end
+
+---Returns the names of the definitions around a selection, best match first
+---(see `selection_definition_names`). Empty when the buffer has no treesitter parser.
+---@param bufnr integer
+---@param start_line integer 1-based, inclusive
+---@param end_line integer 1-based, inclusive
 ---@return string[]
-local function enclosing_definition_names(bufnr, line)
+local function enclosing_definition_names(bufnr, start_line, end_line)
   local ok, parser = pcall(vim.treesitter.get_parser, bufnr, nil, { error = false })
   if not ok or not parser then
     return {}
   end
   parser:parse()
-  local text = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
-  local column = #(text:match("^%s*") or "")
-  local node = vim.treesitter.get_node({ bufnr = bufnr, pos = { line - 1, column } })
-  local names = {}
-  while node do
-    local name_node = node:field("name")[1]
-    if name_node and is_definition_type(node:type()) then
-      table.insert(names, vim.treesitter.get_node_text(name_node, bufnr))
-    end
-    node = node:parent()
+  local chains = {}
+  for line = start_line, math.min(end_line, start_line + MAX_SYMBOL_SCAN_LINES - 1) do
+    table.insert(chains, definitions_at(bufnr, line))
   end
-  return names
+  return selection_definition_names(chains, start_line, end_line)
 end
 
 ---Runs the rundown on a line range of the current buffer and shows the result.
@@ -188,6 +251,9 @@ local function run(start_line, end_line)
     vim.notify("rundown: this buffer is not a file", vim.log.levels.WARN)
     return
   end
+  if not claude_session.require_executables("rundown", { "claude" }) then
+    return
+  end
 
   vim.cmd("silent update") -- Claude reads the file from disk, so line numbers must match
   local session_id = claude_session.new_session_id()
@@ -196,7 +262,9 @@ local function run(start_line, end_line)
     build_command(build_prompt(file, start_line, end_line), vim.g.rundown_model or DEFAULT_MODEL, session_id)
   local buffer_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local file_lines = #buffer_lines <= MAX_INLINE_FILE_LINES and buffer_lines or nil
-  local symbol = consumer_symbol(enclosing_definition_names(0, start_line))
+  local symbol = consumer_symbol(enclosing_definition_names(0, start_line, end_line))
+  local starting_window = vim.api.nvim_get_current_win()
+  local starting_buffer = vim.api.nvim_get_current_buf()
 
   ---@param search_output string|nil
   local function ask_claude(search_output)
@@ -209,13 +277,19 @@ local function run(start_line, end_line)
           vim.notify("rundown: claude failed\n" .. message, vim.log.levels.ERROR)
           return
         end
-        claude_session.show_float(claude_session.output_lines(result.stdout or ""), {
+        local in_starting_window = vim.api.nvim_get_current_win() == starting_window
+          and vim.api.nvim_get_current_buf() == starting_buffer
+        local focus = should_focus_reply(vim.api.nvim_get_mode().mode, in_starting_window)
+        claude_session.show_reply(claude_session.output_lines(result.stdout or ""), {
           title = "rundown",
           session_id = session_id,
           cwd = cwd,
-          focus = true,
-          placement = "cursor",
+          focus = focus,
+          placement = focus and "cursor" or "corner",
         })
+        if not focus then
+          vim.notify("rundown: ready, :ClaudeReply to open it")
+        end
       end)
     )
   end
@@ -237,6 +311,9 @@ end
 
 return {
   build_prompt = build_prompt,
+  is_definition_type = is_definition_type,
+  selection_definition_names = selection_definition_names,
+  should_focus_reply = should_focus_reply,
   enclosing_definition_names = enclosing_definition_names,
   consumer_symbol = consumer_symbol,
   is_test_path = is_test_path,

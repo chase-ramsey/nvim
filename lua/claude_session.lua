@@ -88,15 +88,98 @@ local function float_config(lines, editor_width, editor_height, title, placement
   return config
 end
 
----@return string a new lowercase UUID, the form `claude --session-id` takes
+---Formats 16 random bytes as a version 4 UUID, the form `claude --session-id` takes.
+---@param bytes string 16 bytes
+---@return string
+local function format_uuid(bytes)
+  local hex = {}
+  for index = 1, 16 do
+    local byte = bytes:byte(index)
+    if index == 7 then
+      byte = byte % 16 + 0x40 -- version 4
+    elseif index == 9 then
+      byte = byte % 64 + 0x80 -- RFC 4122 variant
+    end
+    hex[index] = string.format("%02x", byte)
+  end
+  local joined = table.concat(hex)
+  return string.format(
+    "%s-%s-%s-%s-%s",
+    joined:sub(1, 8),
+    joined:sub(9, 12),
+    joined:sub(13, 16),
+    joined:sub(17, 20),
+    joined:sub(21, 32)
+  )
+end
+
+---Shortens `text` to at most `width` characters, never splitting a character.
+---Not callable from a `vim.system` output callback, because it uses `vim.fn`.
+---@param text string
+---@param width integer
+---@return string
+local function truncate(text, width)
+  if vim.fn.strchars(text) <= width then
+    return text
+  end
+  return vim.fn.strcharpart(text, 0, width - 1) .. "…"
+end
+
+---Returns the executables in `names` that are not on PATH.
+---@param names string[]
+---@param is_executable fun(name: string): boolean
+---@return string[]
+local function missing_executables(names, is_executable)
+  local missing = {}
+  for _, name in ipairs(names) do
+    if not is_executable(name) then
+      table.insert(missing, name)
+    end
+  end
+  return missing
+end
+
+---Picks which stored reply to open.
+---@param reply_count integer
+---@param nth integer 1 is the newest reply, 2 the one before it
+---@return integer|nil index into the list of replies, oldest first; nil when there is no such reply
+local function reply_index(reply_count, nth)
+  local index = reply_count - nth + 1
+  if nth < 1 or index < 1 then
+    return nil
+  end
+  return index
+end
+
+-- Everything below reads or changes editor state.
+
+---@return string a new UUID for `claude --session-id`
 local function new_session_id()
-  return vim.trim(vim.fn.system({ "uuidgen" })):lower()
+  return format_uuid(assert(vim.uv.random(16)))
+end
+
+---Reports executables a feature needs that are not on PATH.
+---@param feature string the prefix of the message, such as `rundown`
+---@param names string[]
+---@return boolean ok false when something is missing and the caller should stop
+local function require_executables(feature, names)
+  local missing = missing_executables(names, function(name)
+    return vim.fn.executable(name) == 1
+  end)
+  if #missing == 0 then
+    return true
+  end
+  vim.notify(feature .. ": not on PATH: " .. table.concat(missing, ", "), vim.log.levels.ERROR)
+  return false
 end
 
 ---Resumes a saved session interactively so the conversation can continue.
 ---@param session_id string
 ---@param cwd string directory the session ran in; Claude looks up sessions by directory
 local function start_chat(session_id, cwd)
+  if not require_executables("claude", { "lemonaid" }) then
+    return
+  end
   vim.notify("claude: starting chat")
   vim.system(
     build_chat_command(session_id),
@@ -112,36 +195,98 @@ local function start_chat(session_id, cwd)
   )
 end
 
----@class ClaudeFloatOptions
+---@class ClaudeReply
+---@field lines string[]
 ---@field title string
 ---@field session_id string the session that `c` resumes
 ---@field cwd string directory the session ran in
----@field focus boolean false leaves the cursor where it is, for a reply that arrives later
----@field placement "cursor"|"corner"
+---@field window integer|nil the window showing it, when one is open
 
----Shows Claude's reply in a floating window. `q` and `<Esc>` close it, `c`
+-- Replies are kept here, oldest first, so that one whose window was closed
+-- (by `:only`, or by a newer reply) can be opened again.
+local MAX_REPLIES = 20
+---@type ClaudeReply[]
+local replies = {}
+
+---@param reply ClaudeReply
+---@return boolean
+local function is_open(reply)
+  return reply.window ~= nil and vim.api.nvim_win_is_valid(reply.window)
+end
+
+---Opens a floating window on a stored reply. `q` and `<Esc>` close it, `c`
 ---closes it and continues the session as an interactive chat.
----@param lines string[]
----@param options ClaudeFloatOptions
----@return integer window
-local function show_float(lines, options)
+---@param reply ClaudeReply
+---@param focus boolean false leaves the cursor where it is
+---@param placement "cursor"|"corner"
+local function open_reply(reply, focus, placement)
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, reply.lines)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
   vim.bo[buf].modifiable = false
-  local config = float_config(lines, vim.o.columns, vim.o.lines, options.title, options.placement)
-  local win = vim.api.nvim_open_win(buf, options.focus, config)
-  vim.wo[win].wrap = true
-  vim.wo[win].linebreak = true
+  local config = float_config(reply.lines, vim.o.columns, vim.o.lines, reply.title, placement)
+  reply.window = vim.api.nvim_open_win(buf, focus, config)
+  vim.wo[reply.window].wrap = true
+  vim.wo[reply.window].linebreak = true
   for _, key in ipairs({ "q", "<Esc>" }) do
     vim.keymap.set("n", key, "<cmd>close<CR>", { buffer = buf, nowait = true, silent = true })
   end
   vim.keymap.set("n", "c", function()
     vim.cmd("close")
-    start_chat(options.session_id, options.cwd)
+    start_chat(reply.session_id, reply.cwd)
   end, { buffer = buf, nowait = true, silent = true })
-  return win
+end
+
+---@class ClaudeReplyOptions
+---@field title string
+---@field session_id string the session that `c` resumes
+---@field cwd string directory the session ran in
+---@field focus boolean false leaves the cursor where it is, for a reply that arrives while the user is busy
+---@field placement "cursor"|"corner"
+
+---Closes open reply windows. Replies open in the same corner, so a second
+---window would cover the first.
+---@param keep integer|nil a window to leave open
+local function close_replies(keep)
+  for _, reply in ipairs(replies) do
+    if is_open(reply) and reply.window ~= keep then
+      vim.api.nvim_win_close(reply.window, true)
+    end
+  end
+end
+
+---Stores Claude's reply and shows it in a floating window. `open_stored_reply`
+---brings back a reply whose window has been closed.
+---@param lines string[]
+---@param options ClaudeReplyOptions
+local function show_reply(lines, options)
+  close_replies(vim.api.nvim_get_current_win()) -- a reply being read stays open
+  ---@type ClaudeReply
+  local reply = { lines = lines, title = options.title, session_id = options.session_id, cwd = options.cwd }
+  table.insert(replies, reply)
+  while #replies > MAX_REPLIES do
+    table.remove(replies, 1)
+  end
+  open_reply(reply, options.focus, options.placement)
+end
+
+---Moves the cursor into a stored reply, reopening its window if it was closed.
+---@param nth integer 1 is the newest reply, 2 the one before it
+local function open_stored_reply(nth)
+  local index = reply_index(#replies, nth)
+  if not index then
+    local message = #replies == 0 and "claude: no replies yet" or ("claude: only " .. #replies .. " replies stored")
+    vim.notify(message, vim.log.levels.WARN)
+    return
+  end
+  local reply = replies[index]
+  if is_open(reply) then
+    vim.api.nvim_set_current_win(reply.window)
+    return
+  end
+  close_replies(nil)
+  open_reply(reply, true, "corner")
 end
 
 return {
@@ -151,7 +296,13 @@ return {
   focus_command = focus_command,
   output_lines = output_lines,
   float_config = float_config,
+  format_uuid = format_uuid,
+  truncate = truncate,
+  missing_executables = missing_executables,
+  reply_index = reply_index,
   new_session_id = new_session_id,
+  require_executables = require_executables,
   start_chat = start_chat,
-  show_float = show_float,
+  show_reply = show_reply,
+  open_stored_reply = open_stored_reply,
 }
